@@ -1,0 +1,821 @@
+<!doctype html>
+<!--
+  rpi-nfc-tablet: touch NFC sign-in kiosk for a Raspberry Pi 4 B
+  Created by LunarcatOwO (https://github.com/LunarcatOwO)
+  Copyright (C) 2026 LunarcatOwO
+  SPDX-License-Identifier: GPL-3.0-or-later
+
+  This program is free software: you can redistribute it and/or modify it
+  under the terms of the GNU General Public License as published by the Free
+  Software Foundation, either version 3 of the License, or (at your option)
+  any later version. It comes WITHOUT ANY WARRANTY; see the LICENSE file.
+-->
+
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Team Sign In</title>
+<style>
+/* Laid out for the 7 inch 1024x600 touchscreen. Everything is a finger-sized button. */
+:root {
+  --bg: #0f1318; --bar: #141920; --panel: #161b22; --raised: #1a2028; --key: #222833;
+  --line: #232a34; --text: #eef2f6; --soft: #c9d2dc; --muted: #9aa6b5; --dim: #4a5361;
+  --info: #4f9dff; --success: #34c77b; --warning: #f2b33d; --error: #ff6b6b; --prompt: #b48cff;
+  --accent: var(--info);
+  --ease: cubic-bezier(.2, .7, .2, 1);
+  --sans: Inter, "Noto Sans", "DejaVu Sans", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font-family: var(--sans); overflow: hidden; user-select: none; -webkit-user-select: none;
+  -webkit-font-smoothing: antialiased; touch-action: manipulation; }
+body { display: flex; flex-direction: column; animation: fade .4s var(--ease); }
+@keyframes fade { from { opacity: 0; } }
+@keyframes pop { from { opacity: 0; transform: scale(.92); } }
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } }
+body.kiosk { cursor: none; }
+button { font-family: var(--sans); color: inherit; cursor: inherit; -webkit-tap-highlight-color: transparent; }
+svg { flex: none; }
+
+/* ---- top bar: back arrow, title, season, update, clock, admin gear */
+header { height: 64px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 16px 0 24px;
+  background: var(--bar); border-bottom: 1px solid #252c36; }
+header.backable { padding-left: 12px; }
+.ib { width: 48px; height: 48px; border-radius: 14px; border: 0; background: var(--key);
+  display: grid; place-items: center; padding: 0; transition: transform .08s, background-color .12s; }
+.ib:active, .press:active { transform: scale(.94); }
+#back, #gear, #lock { display: none; }
+header.backable #back, header.idle #gear, header.admin #lock { display: grid; }
+header.admin #back { display: none; }
+#lock { width: auto; padding: 0 18px; display: none; gap: 8px; font: 600 17px var(--sans); grid-auto-flow: column; }
+.brand { flex: 1; min-width: 0; font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand .mark { width: 12px; height: 12px; border-radius: 4px; background: var(--accent); flex: none;
+  transition: background-color .35s var(--ease); }
+header.backable .mark { display: none; }
+.chip { font-size: 15px; color: var(--muted); padding: 6px 12px; border-radius: 999px; background: #1c222b; white-space: nowrap; }
+header:not(.idle) .chip.season { display: none; }
+.update { display: none; color: #7fb6ff; background: rgba(79,157,255,.14); align-items: center; gap: 6px; }
+.update.on { display: flex; animation: pop .35s var(--ease); }
+.clock { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; padding: 0 6px; }
+
+/* ---- the body: [side list] content [who's here | number pad] */
+main { flex: 1; display: flex; min-height: 0; position: relative; }
+#rail { display: none; width: 240px; padding: 16px 12px; flex-direction: column; gap: 6px;
+  border-right: 1px solid #1e242d; flex: none; }
+body.railed #rail { display: flex; }
+#rail button { height: 60px; border: 0; border-radius: 14px; background: transparent; color: var(--soft);
+  font: 600 19px var(--sans); display: flex; align-items: center; gap: 14px; padding: 0 16px; text-align: left; }
+#rail button.on { background: var(--key); color: var(--text); }
+#rail i { width: 12px; height: 12px; border-radius: 4px; }
+#content { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.view { flex: 1; min-height: 0; display: flex; flex-direction: column; animation: rise .28s var(--ease); }
+.scroll { overflow: hidden auto; overscroll-behavior: contain; scrollbar-width: none; }
+.scroll::-webkit-scrollbar { display: none; }
+p { margin: 0; }
+
+/* hero: the start screen, "tap the new card", and busy screens */
+.hero { align-items: center; justify-content: center; gap: 22px; padding: 24px; text-align: center; }
+.ring { width: 180px; height: 180px; border-radius: 50%; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: 0 0 0 18px color-mix(in srgb, var(--accent) 5%, transparent),
+              0 0 0 40px color-mix(in srgb, var(--accent) 3%, transparent);
+  animation: breathe 3.2s ease-in-out infinite; }
+@keyframes breathe { 50% { box-shadow: 0 0 0 24px color-mix(in srgb, var(--accent) 6%, transparent),
+                                       0 0 0 52px color-mix(in srgb, var(--accent) 2%, transparent); } }
+.ring.small { width: 120px; height: 120px; animation: pop .4s var(--ease); box-shadow: none; }
+.hero h1 { margin: 0; font-size: 44px; font-weight: 700; letter-spacing: -.01em; }
+.hero p { font-size: 19px; color: var(--muted); max-width: 520px; line-height: 1.4; }
+.hero .acts { margin-top: 8px; }
+
+/* result: welcome / goodbye / done / errors */
+.result h1 { color: var(--accent); font-size: 46px; }
+.result p { color: var(--soft); font-size: 20px; }
+.stats { display: flex; gap: 12px; width: 100%; max-width: 560px; }
+.stat { flex: 1; background: var(--raised); border-radius: 16px; padding: 16px 18px; text-align: left; }
+.stat span { font-size: 14px; color: var(--muted); }
+.stat b { display: block; font-size: 26px; font-weight: 700; margin-top: 4px; }
+
+/* page: a title's worth of text and buttons */
+.page { padding: 20px 24px; gap: 14px; }
+.page h1 { margin: 0; font-size: 30px; font-weight: 700; display: flex; align-items: center; gap: 14px; }
+.text { font-size: 18px; line-height: 1.45; color: var(--soft); white-space: pre-wrap; overflow-wrap: anywhere; }
+.text.gap { height: 6px; }
+.text.mono { font-variant-numeric: tabular-nums; }
+.err { color: #ffd5d5; background: rgba(255,107,107,.12); border-radius: 12px; padding: 10px 14px;
+  box-shadow: inset 0 0 0 1px rgba(255,107,107,.4); animation: shake .35s; }
+@keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+
+/* buttons drawn from the screen's "K  label" lines */
+.acts { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn { height: 64px; padding: 0 28px; border: 0; border-radius: 18px; background: var(--key);
+  font: 600 20px var(--sans); display: inline-flex; align-items: center; justify-content: center; gap: 12px;
+  transition: transform .08s, filter .12s; }
+.btn.primary { background: var(--go, var(--success)); color: #0f1318; font-weight: 700; }
+.btn.wide { flex: 1; }
+.items { display: grid; gap: 10px; grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr)); }
+.item { min-height: 62px; border: 0; border-radius: 16px; background: var(--panel); font: 500 19px var(--sans);
+  display: flex; align-items: center; gap: 14px; padding: 8px 18px; text-align: left; box-shadow: inset 0 0 0 1px var(--line);
+  transition: transform .08s, background-color .12s; }
+.item:active { background: var(--raised); transform: scale(.98); }
+.item span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+/* admin home: three tiles */
+.tiles { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding: 24px; }
+.tile { border: 0; border-radius: 24px; background: var(--panel); display: flex; flex-direction: column;
+  align-items: flex-start; gap: 10px; padding: 24px; text-align: left; box-shadow: inset 0 0 0 1px var(--line);
+  transition: transform .1s; }
+.tile:active { transform: scale(.97); }
+.tile .ic { width: 60px; height: 60px; border-radius: 18px; display: grid; place-items: center; margin-bottom: auto; }
+.tile b { font-size: 26px; }
+.tile span { font-size: 16px; color: var(--muted); line-height: 1.4; }
+.tile .pill { color: #7fb6ff; background: rgba(79,157,255,.14); padding: 4px 10px; border-radius: 999px; font-size: 14px; }
+
+/* team cards (an old card's first scan, adding a person, changing teams) */
+.teams { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 14px; }
+.team { border: 0; border-radius: 20px; background: var(--panel); font: 600 22px var(--sans); display: flex;
+  flex-direction: column; align-items: flex-start; justify-content: space-between; padding: 18px 20px;
+  text-align: left; box-shadow: inset 0 0 0 1px var(--line); min-height: 110px; transition: transform .1s; }
+.team:active { transform: scale(.97); }
+.team small { display: block; font-size: 15px; font-weight: 500; color: var(--warning); }
+.team.ghost { background: transparent; box-shadow: inset 0 0 0 2px var(--line); color: var(--muted);
+  font-size: 19px; align-items: center; justify-content: center; text-align: center; }
+.tl { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; font-weight: 700;
+  color: #0f1318; font-size: 20px; flex: none; }
+
+/* typing an ID or PIN: the entry and team buttons, with the number pad beside */
+.entry { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 18px 24px;
+  display: flex; align-items: center; gap: 18px; min-height: 96px; }
+.entry .code { font-size: 56px; font-weight: 700; letter-spacing: .12em; font-variant-numeric: tabular-nums; }
+.entry .code u { text-decoration: none; color: var(--dim); }
+.entry .note { font-size: 16px; color: var(--muted); line-height: 1.4; }
+.dots { display: flex; gap: 18px; justify-content: center; }
+.dots i { width: 20px; height: 20px; border-radius: 50%; box-shadow: inset 0 0 0 2px var(--dim); transition: background-color .1s; }
+.dots i.on { background: var(--text); box-shadow: none; animation: pop .15s; }
+.pin { align-items: center; justify-content: center; text-align: center; gap: 22px; }
+.lockic { width: 84px; height: 84px; border-radius: 24px; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.tbtns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.tbtn { height: 64px; border-radius: 16px; border: 2px solid transparent; background: var(--raised);
+  font: 600 18px var(--sans); display: flex; align-items: center; gap: 12px; padding: 0 14px; text-align: left; }
+.tbtn .tl { width: 34px; height: 34px; font-size: 16px; border-radius: 10px; }
+.tbtn.on { border-color: var(--tc); background: color-mix(in srgb, var(--tc) 12%, transparent); }
+.hint { font-size: 15px; color: var(--muted); display: flex; align-items: center; gap: 10px; }
+#pad { display: none; width: 360px; flex: none; margin: 20px 20px 20px 0; gap: 10px;
+  grid-template: repeat(4, minmax(0, 1fr)) / repeat(3, minmax(0, 1fr)); }
+body.padded #pad { display: grid; animation: pop .25s var(--ease); }
+#pad button { border: 0; border-radius: 16px; background: var(--key); font: 600 30px var(--sans);
+  display: grid; place-items: center; padding: 0; transition: transform .08s, background-color .1s; }
+#pad button:active { background: #2c3440; transform: scale(.95); }
+#pad .go { background: var(--go, var(--success)); color: #0f1318; font-size: 22px; font-weight: 700; }
+#pad .go.off { visibility: hidden; }
+
+/* typing a name or Wi-Fi password: the field, and a full keyboard along the bottom */
+.field { height: 64px; border-radius: 16px; background: var(--panel); box-shadow: inset 0 0 0 2px var(--info);
+  display: flex; align-items: center; padding: 0 20px; font-size: 28px; font-weight: 600; white-space: pre; overflow: hidden; }
+.field::after { content: ""; width: 2px; height: 32px; background: var(--info); margin-left: 2px; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+#kbd { display: none; flex: none; padding: 12px 12px 14px; background: var(--bar); border-top: 1px solid #252c36;
+  flex-direction: column; gap: 7px; }
+body.typing #kbd { display: flex; animation: rise .25s var(--ease); }
+#kbd div { display: flex; gap: 7px; }
+#kbd button, #kbd span { flex: 2 1 0; min-width: 0; height: 58px; }
+#kbd button { border: 0; border-radius: 12px; background: var(--key); font: 600 22px var(--sans); padding: 0;
+  transition: transform .06s, background-color .1s; }
+#kbd button:active { background: #2c3440; transform: scale(.94); }
+#kbd button.word { font-size: 18px; }
+#kbd button.done { background: var(--success); color: #0f1318; }
+#kbd button.on { background: var(--info); color: #0f1318; }
+
+/* the start screen's side panel: who's here / leaderboard */
+#side { display: none; width: 400px; flex: none; margin: 14px 14px 14px 0; background: var(--panel); border-radius: 20px;
+  flex-direction: column; overflow: hidden; border: 1px solid var(--line); }
+body.idle #side { display: flex; }
+.tabs { display: flex; padding: 8px; gap: 6px; background: #12171d; position: relative; }
+.tabs button { flex: 1; height: 48px; border: 0; border-radius: 12px; background: transparent; color: var(--muted);
+  font: 600 17px var(--sans); position: relative; z-index: 1; transition: color .25s; }
+.tabs button.on { color: var(--text); }
+.tabs .ink { position: absolute; left: 8px; top: 8px; width: calc(50% - 11px); height: 48px; border-radius: 12px;
+  background: var(--key); transition: transform .3s var(--ease); }
+.tabs.board .ink { transform: translateX(calc(100% + 6px)); }
+#list { flex: 1; min-height: 0; overflow: hidden auto; overflow-anchor: none; overscroll-behavior: contain; scrollbar-width: none; }
+#list::-webkit-scrollbar { display: none; }
+.row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #1e242d; }
+.row.new { animation: arrive 1.8s var(--ease); }
+@keyframes arrive { from { background: rgba(52,199,123,.25); } }
+.av { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-weight: 700;
+  font-size: 15px; color: #0f1318; flex: none; }
+.rank { width: 26px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+.nm { flex: 1; min-width: 0; font-size: 17px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nm div { font-size: 13px; color: var(--muted); font-weight: 400; }
+.tm { font-size: 16px; color: var(--soft); font-variant-numeric: tabular-nums; }
+.empty { color: var(--muted); padding: 24px 16px; font-size: 16px; text-align: center; }
+
+/* "are you sure?" and "is this you?": a box over the screen underneath */
+#veil { position: absolute; inset: 0; z-index: 5; background: rgba(5,8,12,.72); display: none; place-items: center; }
+body.boxed #veil { display: grid; animation: fade .2s; }
+.dialog { width: 600px; max-width: calc(100% - 48px); background: var(--raised); border-radius: 24px; padding: 28px;
+  display: flex; flex-direction: column; gap: 16px; box-shadow: 0 20px 60px rgba(0,0,0,.5), inset 0 0 0 1px #2b333e;
+  animation: pop .25s var(--ease); }
+.dialog h2 { margin: 0; font-size: 28px; }
+.dialog .acts { margin-top: 6px; flex-wrap: nowrap; }
+.dialog .btn { flex: 1; height: 68px; }
+.dialog .btn.primary { flex: 2; }
+.dialog .text { font-size: 18px; }
+.person { display: flex; align-items: center; gap: 20px; }
+.person .av { width: 84px; height: 84px; font-size: 36px; }
+.person b { font-size: 32px; display: block; }
+.person div span { font-size: 18px; color: var(--muted); }
+.warnic { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--accent) 15%, transparent); }
+
+/* spinner while the kiosk waits (Wi-Fi, updates): dots chasing round a circle */
+.spinner { --size: 30px; --dot: 4px; position: relative; width: var(--size); height: var(--size); flex: none; color: var(--accent); }
+.spinner i { position: absolute; inset: 0; opacity: 0; animation: orbit 5.5s infinite; }
+.spinner i::after { content: ""; position: absolute; left: 50%; top: 0; width: var(--dot); height: var(--dot);
+  margin-left: calc(var(--dot) / -2); border-radius: 50%; background: currentColor; }
+.spinner i:nth-child(2) { animation-delay: .24s; } .spinner i:nth-child(3) { animation-delay: .48s; }
+.spinner i:nth-child(4) { animation-delay: .72s; } .spinner i:nth-child(5) { animation-delay: .96s; }
+@keyframes orbit {
+  0% { transform: rotate(225deg); opacity: 1; animation-timing-function: ease-out; }
+  7% { transform: rotate(345deg); animation-timing-function: linear; }
+  30% { transform: rotate(455deg); animation-timing-function: ease-in-out; }
+  39% { transform: rotate(690deg); animation-timing-function: linear; }
+  70% { transform: rotate(815deg); opacity: 1; animation-timing-function: ease-out; }
+  75% { transform: rotate(945deg); animation-timing-function: ease-out; }
+  76%, 100% { transform: rotate(945deg); opacity: 0; }
+}
+/* a result's time left before the start screen comes back */
+#hold { position: fixed; left: 0; right: 0; bottom: 0; height: 6px; background: var(--raised); opacity: 0; transition: opacity .3s; z-index: 6; }
+#hold.on { opacity: 1; }
+#hold i { display: block; height: 100%; background: var(--accent); transform-origin: left; }
+#sim { position: fixed; left: 12px; bottom: 12px; z-index: 9; display: none; gap: 6px; align-items: center;
+  background: #2a1f00; color: #ffd27a; padding: 6px 8px; border-radius: 10px; font-size: 13px; }
+#sim.on { display: flex; }
+#sim input { width: 150px; font: 13px monospace; }
+#offline { position: fixed; right: 12px; bottom: 14px; z-index: 9; padding: 8px 14px 8px 10px; border-radius: 12px;
+  background: #3a1d22; box-shadow: 0 0 0 1px var(--error); color: #ffd5d5; font-size: 14px; display: none; align-items: center; gap: 10px; }
+#offline.on { display: flex; animation: pop .3s var(--ease); }
+#offline .spinner { --size: 18px; --dot: 3px; color: var(--error); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header id="bar">
+  <button class="ib press" id="back" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
+  <div class="brand"><span class="mark"></span><span id="htitle">Team Sign In</span></div>
+  <span class="chip season" id="season"></span>
+  <span class="chip update" id="update"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M2.5 13.5h11"/></svg>Update</span>
+  <span class="clock" id="clock"></span>
+  <button class="ib press" id="lock"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Lock</button>
+  <button class="ib press" id="gear" aria-label="Admin"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+</header>
+<main id="main">
+  <nav id="rail">
+    <button data-nav="people"><i style="background: var(--info)"></i>People</button>
+    <button data-nav="hours"><i style="background: var(--success)"></i>Hours</button>
+    <button data-nav="system"><i style="background: #f2a33d"></i>System</button>
+  </nav>
+  <section id="content"></section>
+  <section id="pad"></section>
+  <aside id="side">
+    <div class="tabs" id="tabs"><span class="ink"></span>
+      <button id="tab-here" class="on">Here now</button><button id="tab-board">Leaderboard</button></div>
+    <div id="list"></div>
+  </aside>
+  <div id="veil"></div>
+</main>
+<div id="kbd"></div>
+<div id="hold"><i></i></div>
+<div id="sim">SIMULATOR card UID: <input id="uid" value="04A1B2C3D4E5F6"><button id="tap">Tap card</button></div>
+<div id="offline"><span class="spinner" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>Kiosk service not responding, reconnecting…</div>
+
+<script>
+// The kiosk screen. Python (web_kiosk.py) decides everything; this page only draws
+// the screens it pushes over /events and sends taps back as keys (see the key list
+// at the top of nfc_login/kiosk/controller.py).
+const $ = id => document.getElementById(id);
+const TONES = ["info", "success", "warning", "error", "prompt"];
+const BRAND = "Team Sign In";
+let side = null;          // /api/kiosk: who's here, leaderboard, teams, settings
+let shown = null;         // the screen showing
+let kbMode = null, kbPage = "letters", kbShift = false;   // the letter keyboard
+
+if (new URLSearchParams(location.search).has("kiosk")) document.body.classList.add("kiosk");
+
+// Build an element: h("div.cls", {attrs}, ...children). Text children are safe (no HTML).
+function h(tag, attrs, ...kids) {
+  const [name, ...cls] = tag.split(".");
+  const el = document.createElement(name);
+  if (cls.length) el.className = cls.join(" ");
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "on") el.onclick = v;
+    else if (k === "style") el.style.cssText = v;
+    else el.setAttribute(k, v);
+  }
+  el.append(...kids.flat().filter(k => k !== null && k !== undefined && k !== false));
+  return el;
+}
+// Inline icons (stroke SVG). Only our own fixed strings go through innerHTML.
+const ICONS = {
+  card: '<rect x="9" y="12" width="22" height="30" rx="3"/><path d="M15 36h10"/><path d="M34 16a10 10 0 0 1 0 14M38 12a16 16 0 0 1 0 22"/>',
+  check: '<path d="M10 25l9 9 19-20"/>',
+  cross: '<path d="M14 14l20 20M34 14L14 34"/>',
+  warn: '<path d="M24 6l19 34H5z"/><path d="M24 20v8M24 35h.01"/>',
+  lock: '<rect x="10" y="22" width="28" height="20" rx="4"/><path d="M16 22v-8a8 8 0 0 1 16 0v8"/>',
+  pad: '<rect x="6" y="8" width="36" height="32" rx="6"/><path d="M14 18h.01M24 18h.01M34 18h.01M14 26h.01M24 26h.01M34 26h.01M16 33h16"/>',
+  chev: '<path d="M18 12l12 12-12 12"/>',
+  del: '<path d="M42 10H18L6 24l12 14h24a2 2 0 0 0 2-2V12a2 2 0 0 0-2-2zM34 18L22 30M22 18l12 12"/>',
+  people: '<circle cx="18" cy="16" r="7"/><path d="M5 40a13 13 0 0 1 26 0M32 9a7 7 0 0 1 0 14M36 29a13 13 0 0 1 7 11"/>',
+  clock: '<circle cx="24" cy="24" r="18"/><path d="M24 14v10l6 4"/>',
+  screen: '<rect x="6" y="8" width="36" height="24" rx="4"/><path d="M16 40h16M24 32v8"/>',
+};
+function icon(name, size, color, width = 2.4) {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("viewBox", "0 0 48 48"); s.setAttribute("width", size); s.setAttribute("height", size);
+  s.setAttribute("fill", "none"); s.setAttribute("stroke", color || "currentColor");
+  s.setAttribute("stroke-width", width); s.setAttribute("stroke-linecap", "round");
+  s.setAttribute("stroke-linejoin", "round"); s.setAttribute("aria-hidden", "true");
+  s.innerHTML = ICONS[name];
+  return s;
+}
+
+// Team colours by letter (M mentors, U imported with no team yet).
+const TEAM_COLORS = { A: "#4f9dff", B: "#f2a33d", C: "#34c77b", D: "#b48cff", M: "#c9d2dc", U: "#6b7684" };
+const SPARE = ["#ff8fa3", "#5ad1d1", "#e0c35a", "#9fd36b", "#8fa8ff"];
+function teamColor(letter) {
+  if (TEAM_COLORS[letter]) return TEAM_COLORS[letter];
+  const i = side ? side.teams.findIndex(t => t.letter === letter) : -1;
+  return SPARE[Math.max(i, 0) % SPARE.length];
+}
+function teamByName(label) {   // "Mentors / Captains  (needs an admin)" -> the Mentors team
+  if (!side) return null;
+  return side.teams.find(t => label.toLowerCase().startsWith(t.name.toLowerCase())) || null;
+}
+
+// ---------------------------------------------------------------- sending taps
+function post(path, data) {
+  return fetch(path, { method: "POST", body: new URLSearchParams(data) }).catch(() => {});
+}
+let sending = Promise.resolve();   // one at a time, so fast taps arrive in order
+function sendKey(key) { tapSound(); sending = sending.then(() => post("/key", { key })); }
+function sendChar(char) { tapSound(); sending = sending.then(() => post("/type", { char })); }
+function sendNav(menu) { tapSound(); sending = sending.then(() => post("/nav", { menu })); }
+
+// ---------------------------------------------------------------- sounds
+// Little tunes from the screen's speakers, made on the fly: [frequency Hz, seconds].
+const SOUNDS = {
+  sign_in: [[660, .09], [880, .09], [1320, .18]],
+  sign_out: [[1320, .09], [880, .09], [660, .18]],
+  success: [[880, .08], [1320, .16]],
+  admin: [[1046, .07], [1318, .07], [1568, .14]],
+  attention: [[880, .1], [660, .1], [880, .1], [660, .14]],
+  warning: [[520, .14], [0, .06], [520, .14]],
+  ignored: [[700, .08]],
+  error: [[330, .16], [220, .3]],
+};
+let audio = null;
+function tone(notes, volume = .18, type = "triangle") {
+  try {
+    audio = audio || new AudioContext();
+    let t = audio.currentTime + .01;
+    for (const [freq, dur] of notes) {
+      if (freq) {
+        const osc = audio.createOscillator(), gain = audio.createGain();
+        osc.type = type; osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(volume, t + .01);
+        gain.gain.exponentialRampToValueAtTime(.001, t + dur);
+        osc.connect(gain).connect(audio.destination);
+        osc.start(t); osc.stop(t + dur + .02);
+      }
+      t += dur;
+    }
+  } catch (e) { /* no audio device: stay quiet */ }
+}
+function playSound(name) { if (name && SOUNDS[name] && (!side || side.sounds)) tone(SOUNDS[name]); }
+function tapSound() { if (side && side.sounds && side.tap_sounds) tone([[1400, .03]], .06, "sine"); }
+
+// ---------------------------------------------------------------- reading lines
+// A line made only of "K  label" parts (K one key, two spaces, the label; parts three
+// or more spaces apart) is buttons that send those keys. Anything else is text.
+function keyParts(line) {
+  const parts = [];
+  for (const chunk of line.trim().split(/ {3,}/)) {
+    const m = /^([0-9A-D*#X])  (\S.*)$/.exec(chunk);
+    if (!m) return null;
+    parts.push([m[1], m[2].trimEnd()]);
+  }
+  return parts;
+}
+// The top bar's back arrow does what a plain "*  back" button would, so those go.
+const isPlainBack = ([key, label]) => key === "*" && /^back$/i.test(label);
+// Lines grouped: {text}, {items: [[k, label]...]} (a run of numbered choices) or
+// {acts: [[k, label]...]} (a row of buttons).
+function blocks(lines) {
+  const out = [];
+  for (const line of lines) {
+    const parts = keyParts(line);
+    if (!parts) { out.push({ text: line }); continue; }
+    const keep = parts.filter(p => !isPlainBack(p));
+    if (!keep.length) continue;
+    const last = out[out.length - 1];
+    if (keep.length === 1 && /^[0-9]$/.test(keep[0][0])) {
+      if (last && last.items) last.items.push(keep[0]); else out.push({ items: [keep[0]] });
+    } else out.push({ acts: keep });
+  }
+  return out;
+}
+// "*" buttons go back (X), whatever has been typed; the rest send their key.
+const keyFor = k => (k === "*" ? "X" : k);
+
+function actButtons(parts, opts = {}) {
+  return h("div.acts", {}, parts.map(([k, label]) => {
+    const primary = !opts.plain && (k === "#" || k === "A");
+    const b = h(`button.btn.press${primary ? ".primary" : ""}${opts.wide ? ".wide" : ""}`,
+                { on: () => sendKey(keyFor(k)) }, opts.icon && k === "#" ? icon(opts.icon, 24) : null, label);
+    return b;
+  }));
+}
+function itemList(items, cols) {
+  return h("div.items", { style: `--cols: ${cols}` }, items.map(([k, label]) =>
+    h("button.item", { on: () => sendKey(k) }, h("span", {}, label), icon("chev", 20, "#6b7684"))));
+}
+function textP(line, cls = "") {
+  return line.trim() ? h(`p.text${cls}`, {}, line) : h("p.text.gap");
+}
+// Text, items and buttons of a screen, in order.
+function drawBlocks(lines, opts = {}) {
+  return blocks(lines).map((b, i) => {
+    if (b.text !== undefined) return textP(b.text, i === 0 && opts.error ? ".err" : (opts.mono ? ".mono" : ""));
+    if (b.items) return itemList(b.items, b.items.length >= 5 ? 2 : 1);
+    return actButtons(b.acts, opts);
+  });
+}
+function statCards(stats) {
+  if (!stats || !stats.length) return null;
+  return h("div.stats", {}, stats.map(([label, value]) => h("div.stat", {}, h("span", {}, label), h("b", {}, value))));
+}
+
+// ---------------------------------------------------------------- screens
+function setAccent(tone) {
+  document.documentElement.style.setProperty("--accent", TONES.includes(tone) ? `var(--${tone})` : "var(--text)");
+}
+// The top bar for this screen: what the title says and which buttons it has.
+function drawBar(s) {
+  const bar = $("bar"), v = s.view;
+  bar.className = "";
+  let title = s.title;
+  if (v === "idle" || v === "result") title = BRAND;
+  else if (v === "admin") title = "Admin";
+  else if (v === "menu") title = "Admin  ·  " + s.title;
+  else if (v === "scan") title = "Admin";
+  if (v === "idle") bar.classList.add("idle");
+  else if (v === "admin") bar.classList.add("admin");
+  else if (v !== "result" && !s.busy) bar.classList.add("backable");
+  $("htitle").textContent = title;
+}
+
+function showScreen(s) {
+  const fresh = !shown || shown.title !== s.title || shown.tone !== s.tone || shown.view !== s.view;
+  shown = s;
+  playSound(s.sound);
+  setAccent(s.tone);
+  const body = document.body;
+  if (s.view === "dialog") {   // over whatever is showing; the bar stays as it is
+    body.classList.add("boxed");
+    $("veil").replaceChildren(drawDialog(s));
+    holdBar(fresh ? s.hold : undefined);
+    return;
+  }
+  body.classList.remove("boxed");
+  drawBar(s);
+  const mode = s.keyboard || null;
+  body.classList.toggle("idle", s.view === "idle");
+  body.classList.toggle("railed", !!s.nav);
+  body.classList.toggle("padded", mode === "id" || mode === "numpad");
+  body.classList.toggle("typing", mode === "name" || mode === "text");
+  if (mode !== kbMode) { kbMode = mode; kbPage = "letters"; kbShift = false; if (mode === "name" || mode === "text") drawKeys(); }
+  document.querySelectorAll("#rail button").forEach(b => b.classList.toggle("on", b.dataset.nav === s.nav));
+  if (mode === "id" || mode === "numpad") drawPad(s);
+  const view = drawView(s);
+  view.classList.add("view");
+  if (!fresh) view.style.animation = "none";   // the same screen, updated: no slide
+  $("content").replaceChildren(view);
+  holdBar(fresh ? s.hold : undefined);
+}
+
+function drawView(s) {
+  if (s.busy) return h("div.hero", {}, h("div.spinner", { style: "--size: 64px; --dot: 8px" }, ...Array(5).fill(0).map(() => h("i"))),
+                       h("h1", {}, s.title), s.lines.map(l => textP(l)));
+  switch (s.keyboard) {
+    case "id": return drawId(s);
+    case "numpad": return drawPin(s);
+    case "name": case "text": return drawTyping(s);
+  }
+  switch (s.view) {
+    case "idle": return drawIdle(s);
+    case "scan": return drawScan(s);
+    case "result": return drawResult(s);
+    case "admin": return drawAdmin(s);
+    case "teams": return drawTeams(s);
+    case "menu": return h("div.page.scroll", {}, drawBlocks(s.lines, { error: s.tone === "error" }));
+  }
+  return h("div.page.scroll", {}, drawBlocks(s.lines, { error: s.tone === "error", mono: true }));
+}
+
+function drawIdle(s) {
+  const bl = blocks(s.lines);
+  return h("div.hero", {},
+    h("div.ring", {}, icon("card", 96, "var(--accent)")),
+    h("h1", {}, s.title),
+    bl.map(b => b.text !== undefined ? textP(b.text)
+      : actButtons(b.acts, { icon: "pad", plain: true })));
+}
+function drawScan(s) {
+  return h("div.hero", {}, h("div.ring", {}, icon("card", 96, "var(--accent)")), h("h1", {}, s.title),
+           drawBlocks(s.lines));
+}
+function drawResult(s) {
+  const ic = { success: "check", error: "cross", warning: "warn" }[s.tone] || "check";
+  return h("div.hero.result", {},
+    h("div.ring.small", {}, icon(ic, 64, "var(--accent)", 3)),
+    h("h1", {}, s.title), s.lines.map(l => textP(l)), statCards(s.stats));
+}
+function drawAdmin(s) {
+  const bl = blocks(s.lines);
+  const items = bl.filter(b => b.items).flatMap(b => b.items);
+  const notes = bl.filter(b => b.text !== undefined && b.text.trim()).map(b => b.text);
+  const look = [["people", "var(--info)"], ["clock", "var(--success)"], ["screen", "#f2a33d"]];
+  return h("div.tiles", {}, items.map(([k, label], i) => {
+    const [name, ...rest] = label.split(": ");
+    const [ic, color] = look[i] || look[0];
+    return h("button.tile", { on: () => sendKey(k) },
+      h("span.ic", { style: `background: color-mix(in srgb, ${color} 14%, transparent)` }, icon(ic, 30, color, 2.2)),
+      h("b", {}, name), rest.length ? h("span", {}, rest.join(": ")) : null,
+      i === items.length - 1 ? notes.map(n => h("span.pill", {}, n)) : null);
+  }));
+}
+function drawTeams(s) {
+  const bl = blocks(s.lines);
+  const texts = bl.filter(b => b.text !== undefined && b.text.trim()).map(b => b.text);
+  const cards = bl.filter(b => b.items).flatMap(b => b.items);
+  const extra = bl.filter(b => b.acts).flatMap(b => b.acts);
+  return h("div.page", {},
+    texts.length ? h("div", {}, h("h1", {}, texts[0]), texts.slice(1).map(t => h("p.text", { style: "color: var(--muted); margin-top: 6px" }, t))) : null,
+    h("div.teams", {},
+      cards.map(([k, label]) => {
+        const team = teamByName(label), [name, note] = label.split(/ {2}\(|\)$/);
+        return h("button.team", { on: () => sendKey(k) },
+          h("span.tl", { style: `background: ${teamColor(team ? team.letter : "")}` }, team && team.key ? team.key : "#"),
+          h("span", {}, name, note ? h("small", {}, note[0].toUpperCase() + note.slice(1)) : null));
+      }),
+      extra.map(([k, label]) => h("button.team.ghost", { on: () => sendKey(keyFor(k)) }, label))));
+}
+// Typing an ID: what's typed so far, the team buttons; the number pad is beside it.
+function drawId(s) {
+  const typed = (s.entry || "").replace(/_/g, ""), left = (s.entry || "").length - typed.length;
+  const letter = /^[A-Z]/.test(typed) ? typed[0] : (typed ? "M" : "");
+  const team = side && side.teams.find(t => t.letter === letter);
+  const code = h("div.code", {}, typed, h("u", {}, "_".repeat(left)));
+  const note = team ? `${team.name}\n${left} more digit${left === 1 ? "" : "s"}` : "Tap your team,\nthen your number";
+  const keys = side ? side.keys : [];
+  const bl = blocks(s.lines);
+  return h("div.page", {},
+    s.tone === "error" && bl[0] && bl[0].text ? textP(bl[0].text, ".err") : null,
+    h("div.entry", {}, code, h("div.note", { style: "white-space: pre-line" }, note)),
+    h("div.hint", {}, "Tap your team, then type your number"),
+    h("div.tbtns", {}, keys.map(t => h(`button.tbtn${t.letter === letter ? ".on" : ""}`,
+      { style: `--tc: ${teamColor(t.letter)}`, on: () => sendKey(t.key) },
+      h("span.tl", { style: `background: ${teamColor(t.letter)}` }, t.key), t.name))),
+    side && side.mentors ? h("div.hint", { style: "margin-top: auto" },
+      h("span.tl", { style: `background: ${teamColor("M")}; width: 28px; height: 28px; font-size: 13px` }, "#"),
+      "Mentors and captains: just type your number.") : null);
+}
+// PINs (dots) and hour amounts (text), with the number pad beside.
+function drawPin(s) {
+  const entry = s.entry || "", dots = /^•*$/.test(entry);
+  const bl = blocks(s.lines);
+  const err = s.tone === "error" && bl[0] && bl[0].text !== undefined;
+  const rest = err ? bl.slice(1) : bl;
+  if (!dots) {   // an amount: "130  =  1h 30m"
+    return h("div.page", {}, err ? textP(bl[0].text, ".err") : null,
+      h("div.entry", {}, h("div.code", { style: "font-size: 44px; letter-spacing: .02em" }, entry)),
+      rest.map(b => b.text !== undefined ? textP(b.text) : b.items ? itemList(b.items, 1) : actButtons(b.acts, { wide: true })));
+  }
+  const n = Math.max(entry.length, 4);
+  return h("div.hero.pin", {},
+    err ? textP(bl[0].text, ".err") : h("div.lockic", {}, icon("lock", 40, "var(--accent)", 2)),
+    h("h1", { style: "font-size: 34px" }, s.title),
+    h("div.dots", {}, Array.from({ length: n }, (_, i) => h(`i${i < entry.length ? ".on" : ""}`))),
+    rest.map(b => b.text !== undefined ? textP(b.text) : actButtons(b.acts)));
+}
+// Names and Wi-Fi passwords: a field, with the keyboard along the bottom.
+function drawTyping(s) {
+  const bl = blocks(s.lines);
+  const err = s.tone === "error" && bl[0] && bl[0].text !== undefined;
+  const label = bl.filter(b => b.text !== undefined).map(b => b.text);
+  return h("div.page", { style: "justify-content: flex-start" },
+    err ? textP(label.shift(), ".err") : null,
+    label.map(t => h("p.text", { style: "font-size: 15px; color: var(--muted)" }, t)),
+    h("div.field", {}, (s.entry || "").replace(/_$/, "")));
+}
+function drawDialog(s) {
+  const p = s.person;
+  const warn = s.tone === "warning" || s.tone === "error";
+  const go = warn ? "var(--warning)" : "var(--success)";
+  const bl = blocks(s.lines);
+  const acts = bl.filter(b => b.acts).flatMap(b => b.acts);
+  // Cancel first, the action last (where the thumb is).
+  acts.sort((a, b) => (a[0] === "*") === (b[0] === "*") ? 0 : a[0] === "*" ? -1 : 1);
+  return h("div.dialog", { role: "dialog", style: `--go: ${go}` },
+    p ? h("div.person", {}, h("span.av", { style: `background: ${teamColor(p.team)}` }, p.name[0] || "?"),
+          h("div", {}, h("b", {}, p.name), h("span", {}, p.sub))) : (warn ? h("div.warnic", {}, icon("warn", 28, "var(--accent)", 2.6)) : null),
+    h("h2", {}, s.title),
+    bl.filter(b => b.text !== undefined).map(b => textP(b.text)),
+    statCards(s.stats),
+    h("div.acts", {}, acts.map(([k, label]) => h(`button.btn.press${k === "#" ? ".primary" : ""}`,
+      { on: () => sendKey(keyFor(k)) }, label))));
+}
+
+// A result runs a bar down until the start screen comes back. undefined: carry on.
+function holdBar(seconds) {
+  if (seconds === undefined) return;
+  const bar = $("hold"), fill = bar.firstElementChild;
+  fill.getAnimations().forEach(a => a.cancel());
+  bar.classList.toggle("on", !!seconds);
+  if (seconds) fill.animate([{ transform: "scaleX(1)" }, { transform: "scaleX(0)" }],
+                            { duration: seconds * 1000, easing: "linear", fill: "forwards" });
+}
+
+// ---------------------------------------------------------------- number pad
+const PAD = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
+function drawPad(s) {
+  // Adding hours uses its own Add / Subtract buttons, so Enter isn't needed there.
+  const noGo = s.lines.some(l => (keyParts(l) || []).some(([k]) => k === "A"));
+  const goLabel = s.keyboard === "id" ? "Go" : "OK";
+  $("pad").style.setProperty("--go", s.keyboard === "numpad" ? "var(--prompt)" : "var(--success)");
+  $("pad").replaceChildren(...PAD.map(k => {
+    if (k === "*") return h("button", { "aria-label": "Delete", on: () => sendKey("*") }, icon("del", 30, null, 2.2));
+    if (k === "#") return h(`button.go${noGo ? ".off" : ""}`, { on: () => sendKey("#") }, goLabel);
+    return h("button", { on: () => sendKey(k) }, k);
+  }));
+}
+
+// ---------------------------------------------------------------- letter keyboard
+// "name" types people's names (the kiosk capitalises them). "text" is a full keyboard
+// for Wi-Fi passwords: a one-shot Shift, and a 123 page of digits and symbols.
+const KEYBOARDS = {
+  name: [[..."QWERTYUIOP"], [..."ASDFGHJKL'"], [..."ZXCVBNM-."], ["Space", "Delete", "Done"]],
+  letters: [[..."qwertyuiop"], ["", ..."asdfghjkl", ""], ["Shift", ..."zxcvbnm", "Delete"], ["123", "Space", "Done"]],
+  symbols: [[..."1234567890"], [..."-/:;()$&@\""], [...".,?!'#%*+="], [..."_\\|~<>{}[]^`"], ["ABC", "Space", "Delete", "Done"]],
+};
+const WEIGHTS = { "": 1, Shift: 3, Delete: 3, "123": 3, ABC: 3, Done: 3, Space: 9 };
+const CHARS = { Space: " ", Delete: "back", Done: "done" };
+function drawKeys() {
+  const rows = kbMode === "name" ? KEYBOARDS.name : KEYBOARDS[kbPage];
+  $("kbd").replaceChildren(...rows.map(row => h("div", {}, row.map(key => {
+    if (!key) return h("span", { style: "flex-grow: 1" });
+    const b = h("button", { style: `flex-grow: ${WEIGHTS[key] || 2}`, on: () => pressKey(key) },
+                kbShift && key.length === 1 ? key.toUpperCase() : key);
+    if (key.length > 1) b.classList.add("word");
+    if (key === "Done") b.classList.add("done");
+    if (key === "Shift" && kbShift) b.classList.add("on");
+    return b;
+  }))));
+}
+function pressKey(key) {
+  if (key === "Shift") kbShift = !kbShift;
+  else if (key === "123" || key === "ABC") { kbPage = key === "123" ? "symbols" : "letters"; kbShift = false; }
+  else {
+    let char = CHARS[key] || key;
+    if (kbMode === "name") char = char.toLowerCase();
+    else if (kbShift && /^[a-z]$/.test(char)) { char = char.toUpperCase(); kbShift = false; drawKeys(); }
+    return sendChar(char);
+  }
+  tapSound();
+  drawKeys();
+}
+
+// ---------------------------------------------------------------- who's here / leaderboard
+let tab = "here", listSig = null;
+function renderSide() {
+  if (!side) return;
+  $("tab-here").textContent = `Here now · ${side.here.length}`;
+  $("tab-here").classList.toggle("on", tab === "here");
+  $("tab-board").classList.toggle("on", tab === "board");
+  $("tabs").classList.toggle("board", tab === "board");
+  const rows = tab === "here" ? side.here : side.board;
+  const sig = JSON.stringify([tab, rows.map(r => [r.rank, r.code, r.name])]);
+  if (sig === listSig) {   // the same people: only the times move on
+    rows.forEach((r, i) => { const t = $("list").children[i] && $("list").children[i].querySelector(".tm"); if (t) t.textContent = r.time; });
+    return;
+  }
+  const before = new Set([...$("list").querySelectorAll(".row")].map(r => r.dataset.code));
+  const sameTab = listSig && JSON.parse(listSig)[0] === tab;
+  listSig = sig;
+  if (!rows.length) {
+    $("list").replaceChildren(h("div.empty", {}, tab === "here" ? "Nobody signed in yet" : "No hours yet"));
+    return;
+  }
+  $("list").replaceChildren(...rows.map(r => {
+    const row = h("div.row", { "data-code": r.code },
+      tab === "board" ? h("span.rank", {}, String(r.rank)) : null,
+      h("span.av", { style: `background: ${teamColor(r.letter)}` }, (r.name || "?")[0]),
+      h("div.nm", {}, r.name, h("div", {}, `${r.code} · ${r.team}`)),
+      h("span.tm", {}, r.time));
+    if (tab === "here" && sameTab && !before.has(r.code)) row.classList.add("new");   // just signed in
+    return row;
+  }));
+}
+function selectTab(t) { if (t !== tab) { tab = t; tapSound(); renderSide(); $("list").scrollTop = 0; auto.since = performance.now(); } }
+
+// A list longer than the panel scrolls by itself (20 px a second, resting 3 s at each
+// end). Touching it pauses that for 20 s.
+const auto = { phase: "top", since: 0, pos: 0, last: 0, pausedUntil: 0 };
+function autoScroll(now) {
+  requestAnimationFrame(autoScroll);
+  const dt = Math.min(now - auto.last, 100) / 1000;
+  auto.last = now;
+  const box = $("list"), max = box.scrollHeight - box.clientHeight;
+  if (max < 1 || now < auto.pausedUntil) { if (max < 1) Object.assign(auto, { phase: "top", since: now, pos: 0 }); return; }
+  if (auto.pausedUntil) { auto.pausedUntil = 0; auto.pos = box.scrollTop; auto.phase = "down"; auto.since = now; }
+  if (auto.phase === "top") { if (now - auto.since > 3000) auto.phase = "down"; }
+  else if (auto.phase === "down") {
+    auto.pos = Math.min(auto.pos + 20 * dt, max);
+    box.scrollTop = auto.pos;
+    if (auto.pos >= max) Object.assign(auto, { phase: "bottom", since: now });
+  } else if (now - auto.since > 3000) { box.scrollTop = 0; Object.assign(auto, { phase: "top", since: now, pos: 0 }); }
+}
+requestAnimationFrame(autoScroll);
+for (const type of ["pointerdown", "wheel"]) $("list").addEventListener(type, () => { auto.pausedUntil = performance.now() + 20000; }, { passive: true });
+
+// ---------------------------------------------------------------- swipes
+// Swiping in from the left edge goes back (like the arrow); swiping the side list
+// sideways switches between Here now and Leaderboard.
+let swipe = null;
+document.addEventListener("pointerdown", e => { swipe = { x: e.clientX, y: e.clientY, edge: e.clientX < 28, side: !!e.target.closest("#side") }; });
+document.addEventListener("pointerup", e => {
+  if (!swipe) return;
+  const dx = e.clientX - swipe.x, dy = Math.abs(e.clientY - swipe.y);
+  if (dy < 60 && Math.abs(dx) > 80) {
+    if (swipe.edge && dx > 0 && $("bar").classList.contains("backable")) sendKey("X");
+    else if (swipe.side) selectTab(dx < 0 ? "board" : "here");
+  }
+  swipe = null;
+});
+
+// ---------------------------------------------------------------- data, buttons, clock
+async function loadSide() {
+  try {
+    const res = await fetch("/api/kiosk", { cache: "no-store" });
+    if (!res.ok) return;
+    const first = !side;
+    side = await res.json();
+    $("season").textContent = "Season " + side.season;
+    $("sim").classList.toggle("on", side.simulated);
+    $("update").classList.toggle("on", side.update);
+    renderSide();
+    if (first && shown && shown.view !== "dialog") showScreen({ ...shown, sound: null });   // team names and colours arrived
+  } catch (e) { /* the event stream shows the offline notice */ }
+}
+$("back").onclick = () => sendKey("X");
+$("lock").onclick = () => sendKey("X");
+$("gear").onclick = () => sendKey("*");
+$("tab-here").onclick = () => selectTab("here");
+$("tab-board").onclick = () => selectTab("board");
+document.querySelectorAll("#rail button").forEach(b => { b.onclick = () => sendNav(b.dataset.nav); });
+$("tap").onclick = () => post("/tap", { uid: $("uid").value });
+
+// A computer (or USB) keyboard works too: digits, A-D, Enter, Backspace, Esc = back.
+document.addEventListener("keydown", e => {
+  if (e.target === $("uid")) { if (e.key === "Enter") $("tap").click(); return; }
+  if (document.body.classList.contains("typing") && e.key !== "Escape") {
+    const char = { Enter: "done", Backspace: "back" }[e.key] || (e.key.length === 1 ? e.key : "");
+    if (char) { e.preventDefault(); sendChar(char); }
+    return;
+  }
+  const key = { Enter: "#", Backspace: "*", Escape: "X" }[e.key] || e.key.toUpperCase();
+  if (key.length === 1 && "0123456789ABCD*#X".includes(key)) { e.preventDefault(); sendKey(key); }
+});
+document.addEventListener("contextmenu", e => e.preventDefault());   // no long-press menu
+
+function connect() {
+  const events = new EventSource("/events");
+  events.onopen = () => { $("offline").classList.remove("on"); loadSide(); };
+  events.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === "screen") showScreen(msg.screen);
+    if (msg.type === "refresh") loadSide();
+  };
+  events.onerror = () => $("offline").classList.add("on");   // EventSource retries by itself
+}
+function tick() { $("clock").textContent = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }); }
+tick();
+setInterval(tick, 1000);
+setInterval(loadSide, 5000);
+connect();
+</script>
+</body>
+</html>

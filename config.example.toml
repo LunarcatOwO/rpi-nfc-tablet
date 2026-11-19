@@ -1,0 +1,92 @@
+# rpi-nfc-tablet: touch NFC sign-in kiosk for a Raspberry Pi 4 B
+# Created by LunarcatOwO (https://github.com/LunarcatOwO)
+# Copyright (C) 2026 LunarcatOwO
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option)
+# any later version. It comes WITHOUT ANY WARRANTY; see the LICENSE file.
+
+# Copy to config.toml and edit. Anything left out uses the default shown here.
+
+[database]
+host = "localhost"
+port = 3306
+user = "nfc_login"
+password = "change-me"          # or set NFC_LOGIN_DB_PASSWORD instead
+name = "nfc_login"
+
+[hardware]
+mode = "pi"                     # "pi" for the real reader, "simulated" for a PC
+
+[hardware.nfc]
+interface = "spi"               # how the PN532 is wired: "spi" (fastest), "i2c" or "uart"
+spi_cs_pin = 5                  # BCM pin for the PN532's SS line (physical pin 29)
+spi_baudrate = 1000000          # Hz; the PN532 allows up to 5 MHz, lower it for long wires
+uart_port = "/dev/serial0"
+tries = 4                       # attempts per block when a read or write fails part-way
+write_tags = true               # write ID / time / rank / link onto the card after each scan
+poll_timeout_seconds = 0.5
+
+[tag]
+# Placeholder for the GitHub Pages site a phone opens when it taps the card.
+site_url = "https://lunarcatowo.github.io/rpi-nfc-tablet/"
+
+[attendance]
+min_scan_interval_seconds = 10  # ignore the same card again within this window
+max_session_hours = 12          # longer sessions are treated as a forgotten sign-out (0 credit)
+
+[updates]
+enabled = true                  # when online, check GitHub for a newer version
+check_hours = 6                 # and show a small download icon by the clock if there is one
+
+[ui]
+leaderboard_size = 10
+result_seconds = 6              # how long a scan result stays on screen
+idle_timeout_seconds = 30       # an untouched screen goes back to the start after this
+sounds = true                   # chimes from the screen's speakers (sign in, sign out, errors)
+tap_sounds = true               # and a soft click on every tap
+
+[seasons]
+archive_dir = "archive"         # CSV snapshots written on every season reset
+
+[web]
+# Live "who's here" page and admin page at http://<pi-address>:8080/
+enabled = true
+host = "0.0.0.0"
+port = 8080
+refresh_seconds = 3
+
+# Teams. A user's ID is their team letter plus a number (A007), and "key" is
+# what the team's button sends on the ID screen. "short" is the name on the kiosk's
+# side panel (8 letters at most). Letter M is the mentors: leave out "key",
+# their IDs are just a number (007). Up to 999 people per team.
+[[sections]]
+letter = "A"
+name = "Robot"
+short = "Robot"
+key = "A"
+
+[[sections]]
+letter = "B"
+name = "Impact"
+short = "Impact"
+key = "B"
+
+[[sections]]
+letter = "C"
+name = "Sustainability"
+short = "Sustain"
+key = "C"
+
+[[sections]]
+letter = "D"
+name = "Game Performance"
+short = "Game"
+key = "D"
+
+[[sections]]
+letter = "M"
+name = "Mentors"
+short = "Mentor"

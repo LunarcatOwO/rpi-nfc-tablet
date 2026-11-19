@@ -1,0 +1,172 @@
+# rpi-nfc-tablet: touch NFC sign-in kiosk for a Raspberry Pi 4 B
+# Created by LunarcatOwO (https://github.com/LunarcatOwO)
+# Copyright (C) 2026 LunarcatOwO
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option)
+# any later version. It comes WITHOUT ANY WARRANTY; see the LICENSE file.
+
+"""Seasons: one tracking period (normally a school year) each."""
+
+# Hours are always added up per season, so starting a new season puts everyone
+# back to 0h 00m without deleting anything. Users and cards carry over.
+
+from __future__ import annotations
+
+import csv
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Callable
+
+from nfc_login.db import Database
+from nfc_login.db import repository as repo
+from nfc_login.services import leaderboard as lb
+from nfc_login.services import timefmt
+from nfc_login.services.attendance import credited_seconds
+
+
+class SeasonError(Exception):
+    """A season problem to show to the admin."""
+
+
+@dataclass
+class ResetSummary:
+    """What a season reset did, for the confirmation screen."""
+
+    old_season: str | None
+    new_season: str
+    signed_out: int
+    archive_files: list[Path]
+
+
+class SeasonService:
+    """Starts, lists and exports seasons."""
+
+    def __init__(
+        self,
+        db: Database,
+        archive_dir: str | Path = "archive",
+        max_session_hours: float = 12,
+        clock: Callable[[], datetime] = timefmt.now,
+    ):
+        self.db = db
+        self.archive_dir = Path(archive_dir)
+        self.max_session = timedelta(hours=max_session_hours)
+        self.clock = clock
+
+    def active(self) -> dict | None:
+        with self.db.transaction() as cur:
+            return repo.get_active_season(cur)
+
+    def list(self) -> list[dict]:
+        with self.db.transaction() as cur:
+            return repo.list_seasons(cur)
+
+    def past(self) -> list[dict]:
+        """Finished seasons, newest first."""
+        return [s for s in reversed(self.list()) if not s["is_active"]]
+
+    def records(self, season_id: int) -> list[lb.LeaderboardEntry]:
+        """A season's ranking of everyone who has time in it."""
+        # Deactivated people are kept: they may have left since, but their hours still count.
+        with self.db.transaction() as cur:
+            entries = lb.leaderboard(cur, season_id, include_inactive=True)
+        return [e for e in entries if e.total_seconds > 0]
+
+    def ensure_active(self) -> dict:
+        """Create a season named after the current year if none is active."""
+        with self.db.transaction() as cur:
+            season = repo.get_active_season(cur)
+            if season:
+                return season
+            name = self._unique_name(cur, str(self.clock().year))
+            repo.create_season(cur, name, self.clock())
+            return repo.get_active_season(cur)
+
+    def next_name(self) -> str:
+        """A free name for a new season: the year, or 2026-2 if that's taken."""
+        with self.db.transaction() as cur:
+            return self._unique_name(cur, str(self.clock().year))
+
+    def start_new(self, name: str | None = None) -> ResetSummary:
+        """Season reset: end the active season and start a new one."""
+        now = self.clock()
+        with self.db.transaction() as cur:
+            name = name or str(now.year)
+            if repo.get_season_by_name(cur, name):
+                raise SeasonError(f"A season named {name!r} already exists.")
+
+            old = repo.get_active_season(cur, for_update=True)
+            signed_out = 0
+            if old:
+                # 1. Sign everyone out, crediting their time to the old season.
+                for session in repo.list_open_sessions(cur):
+                    credit = credited_seconds(session["sign_in_at"], now, self.max_session)
+                    repo.close_session(cur, session["id"], now, "season_reset", credit)
+                    signed_out += 1
+                repo.end_season(cur, old["id"], now)  # 2. mark it ended
+            repo.create_season(cur, name, now)        # 3. start the new one
+
+        # 4. After the commit: save the old season to CSV files in the archive folder.
+        files = self.export(old["name"]) if old else []
+        return ResetSummary(old["name"] if old else None, name, signed_out, files)
+
+    def leaderboard(self, name: str | None = None) -> tuple[dict, list[lb.LeaderboardEntry]]:
+        """Any season's leaderboard by name (the active one by default)."""
+        with self.db.transaction() as cur:
+            season = repo.get_season_by_name(cur, name) if name else repo.get_active_season(cur)
+            if not season:
+                raise SeasonError(f"No season named {name!r}." if name else "No active season.")
+            return season, lb.leaderboard(cur, season["id"])
+
+    def export(self, name: str) -> list[Path]:
+        """Write <archive>/<season>-leaderboard.csv and <season>-sessions.csv."""
+        with self.db.transaction() as cur:
+            season = repo.get_season_by_name(cur, name)
+            if not season:
+                raise SeasonError(f"No season named {name!r}.")
+            entries = lb.leaderboard(cur, season["id"])
+            sessions = repo.season_sessions(cur, season["id"])
+            adjustments = repo.list_adjustments(cur, season["id"], limit=1_000_000)  # all
+
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
+        # Season names become file names: replace anything but letters, digits, - and _.
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+        board_path = self.archive_dir / f"{safe}-leaderboard.csv"
+        sessions_path = self.archive_dir / f"{safe}-sessions.csv"
+
+        with board_path.open("w", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["rank", "user_id", "username", "section", "total_seconds",
+                             "hours", "minutes"])
+            for e in entries:
+                hours, minutes = timefmt.split_hours_minutes(e.total_seconds)
+                writer.writerow([e.rank, e.code, e.username, e.section, e.total_seconds,
+                                 hours, minutes])
+
+        with sessions_path.open("w", newline="") as fh:
+            writer = csv.writer(fh)
+            columns = ["id", "code", "username", "sign_in_at", "sign_in_method",
+                       "sign_out_at", "sign_out_method", "credited_seconds"]
+            writer.writerow([c if c != "code" else "user_id" for c in columns])  # header row
+            for s in sessions:
+                writer.writerow([s[c] for c in columns])
+            # Admin corrections are listed after the sessions.
+            for a in adjustments:
+                writer.writerow([f"adj-{a['id']}", a["code"], a["username"], a["created_at"],
+                                 f"adjustment ({a['created_via']})", "", a["reason"],
+                                 a["seconds"]])
+
+        return [board_path, sessions_path]
+
+    @staticmethod
+    def _unique_name(cur, base: str) -> str:
+        """base, or base-2, base-3... if it's taken."""
+        name, n = base, 2
+        while repo.get_season_by_name(cur, name):
+            name = f"{base}-{n}"
+            n += 1
+        return name

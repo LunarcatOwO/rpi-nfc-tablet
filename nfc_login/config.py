@@ -1,0 +1,199 @@
+# rpi-nfc-tablet: touch NFC sign-in kiosk for a Raspberry Pi 4 B
+# Created by LunarcatOwO (https://github.com/LunarcatOwO)
+# Copyright (C) 2026 LunarcatOwO
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option)
+# any later version. It comes WITHOUT ANY WARRANTY; see the LICENSE file.
+
+"""Loads config.toml over the defaults below (config.example.toml shows every setting)."""
+
+from __future__ import annotations
+
+import copy
+import os
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+# config.toml only needs the values that differ from DEFAULTS.
+DEFAULT_CONFIG_PATH = Path(os.environ.get("NFC_LOGIN_CONFIG", "config.toml"))
+
+DEFAULTS: dict = {
+    "database": {
+        "host": "localhost",
+        "port": 3306,
+        "user": "nfc_login",
+        "password": "",
+        "name": "nfc_login",
+    },
+    "hardware": {
+        # "pi" uses the real PN532, "simulated" runs on any computer.
+        "mode": "pi",
+        # PN532 wiring (DIP switches: SPI = 1 OFF, 2 ON). SPI is the quickest and
+        # most reliable on a Pi 4: I2C clock stretching garbles replies and UART
+        # needs Bluetooth moved off the serial port. "i2c" and "uart" still work.
+        "nfc": {
+            "interface": "spi",
+            "spi_cs_pin": 5,           # BCM pin for the PN532's SS (physical pin 29)
+            "spi_baudrate": 1_000_000, # Hz; the PN532 allows up to 5 MHz
+            "uart_port": "/dev/serial0",
+            "tries": 4,                # attempts per block if a read or write fails
+            "write_tags": True,
+            "poll_timeout_seconds": 0.5,  # how long each "is a card there?" check waits
+        },
+    },
+    "tag": {
+        # Placeholder: the GitHub Pages site that will read the card on a phone.
+        "site_url": "https://lunarcatowo.github.io/rpi-nfc-tablet/",
+    },
+    "attendance": {
+        # A second scan of the same card within this window is ignored.
+        "min_scan_interval_seconds": 10,
+        # Sessions left open longer than this are closed with no time credited.
+        "max_session_hours": 12,
+    },
+    "ui": {
+        "leaderboard_size": 10,
+        "result_seconds": 6,           # how long a result stays before the start screen
+        "idle_timeout_seconds": 30,    # an untouched screen goes back to the start after this
+        "sounds": True,                # chimes from the screen's speakers
+        "tap_sounds": True,            # a soft click on every tap
+    },
+    "seasons": {
+        "archive_dir": "archive",      # CSVs of each finished season go here
+    },
+    # Teams. The letter starts each user ID (A007, D012); "key" is what the
+    # team's button on the ID screen sends (normally the letter) and "short"
+    # fits the side panel. Letter M is the mentors: no key, number-only IDs (007).
+    "sections": [
+        {"letter": "A", "name": "Robot", "short": "Robot", "key": "A"},
+        {"letter": "B", "name": "Impact", "short": "Impact", "key": "B"},
+        {"letter": "C", "name": "Sustainability", "short": "Sustain", "key": "C"},
+        {"letter": "D", "name": "Game Performance", "short": "Game", "key": "D"},
+        {"letter": "M", "name": "Mentors", "short": "Mentor", "key": ""},
+    ],
+    # When the Pi is online, check GitHub for a newer version every few hours
+    # and show a small download icon by the clock if there is one.
+    "updates": {
+        "enabled": True,
+        "check_hours": 6,
+    },
+    # Live "who's here" page and admin page, served by the kiosk on the LAN.
+    "web": {
+        "enabled": True,
+        "host": "0.0.0.0",             # every network interface
+        "port": 8080,
+        "refresh_seconds": 3,          # how often the live page reloads its data
+    },
+}
+
+
+def _merge(base: dict, override: dict) -> dict:
+    """Deep merge: nested tables are merged key by key, anything else is replaced."""
+    merged = copy.deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+@dataclass
+class Config:
+    """The merged settings, with a shortcut property for each top-level table."""
+
+    data: dict = field(default_factory=lambda: copy.deepcopy(DEFAULTS))
+
+    def section(self, *path: str) -> dict:
+        node = self.data
+        for key in path:
+            node = node[key]
+        return node
+
+    @property
+    def database(self) -> dict:
+        return self.data["database"]
+
+    @property
+    def hardware(self) -> dict:
+        return self.data["hardware"]
+
+    @property
+    def tag(self) -> dict:
+        return self.data["tag"]
+
+    @property
+    def attendance(self) -> dict:
+        return self.data["attendance"]
+
+    @property
+    def ui(self) -> dict:
+        return self.data["ui"]
+
+    @property
+    def seasons(self) -> dict:
+        return self.data["seasons"]
+
+    @property
+    def sections(self) -> list[dict]:
+        return self.data["sections"]
+
+    @property
+    def updates(self) -> dict:
+        return self.data["updates"]
+
+    @property
+    def web(self) -> dict:
+        return self.data["web"]
+
+
+def load_config(path: str | Path | None = None) -> Config:
+    """Load the config file, merged over the defaults."""
+    # A missing file isn't an error: the defaults are used (handy for simulator runs).
+    path = Path(path) if path else DEFAULT_CONFIG_PATH
+    override: dict = {}
+    if path.exists():
+        with path.open("rb") as fh:
+            override = tomllib.load(fh)
+    data = _merge(DEFAULTS, override)
+    _check_sections(data["sections"])
+    # Environment variables win for secrets so they can stay out of the file.
+    if os.environ.get("NFC_LOGIN_DB_PASSWORD"):
+        data["database"]["password"] = os.environ["NFC_LOGIN_DB_PASSWORD"]
+    return Config(data)
+
+
+def _check_sections(sections: list[dict]) -> None:
+    """Normalise the [[sections]] (teams) and refuse ones that can't be typed."""
+    # Imported here to avoid a circular import (ids.py doesn't need the config).
+    from nfc_login.services.ids import MENTORS, UNSORTED
+
+    for section in sections:
+        section["letter"] = section["letter"].upper()
+        # Team D was renamed: a Pi whose config.toml still has the old name
+        # picks up the new one without anyone editing the file.
+        if section["letter"] == "D" and section.get("name") == "Strategy":
+            section["name"], section["short"] = "Game Performance", "Game"
+        section["key"] = section.get("key", "").upper()
+        section.setdefault("short", section["name"][:8])
+        letter, key = section["letter"], section["key"]
+        if len(letter) != 1 or not letter.isalpha():
+            raise ValueError(f"section letter must be one letter: {letter!r}")
+        if letter == UNSORTED:
+            raise ValueError(f"section letter {UNSORTED} is reserved for imported users "
+                             "who haven't been given a team yet")
+        if letter == MENTORS:
+            if key:
+                raise ValueError(f"section {MENTORS} is the mentors, whose IDs are only "
+                                 "numbers, so it can't have a key")
+        elif len(key) != 1 or key in "*#X" or key.isdigit():
+            raise ValueError(f"section {letter} needs one key that isn't *, #, X or a digit "
+                             "(those are used for typing)")
+    letters = [s["letter"] for s in sections]
+    keys = [s["key"] for s in sections if s["key"]]
+    if len(set(letters)) != len(letters) or len(set(keys)) != len(keys):
+        raise ValueError("each section needs its own letter and its own key")

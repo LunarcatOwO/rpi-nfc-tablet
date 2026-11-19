@@ -1,0 +1,173 @@
+# rpi-nfc-tablet: touch NFC sign-in kiosk for a Raspberry Pi 4 B
+# Created by LunarcatOwO (https://github.com/LunarcatOwO)
+# Copyright (C) 2026 LunarcatOwO
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option)
+# any later version. It comes WITHOUT ANY WARRANTY; see the LICENSE file.
+
+"""The kiosk screen served for the Electron app (nfc_login/ui/web_kiosk.py)."""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+import pytest
+
+from nfc_login.hardware.simulated import SimulatedReader
+from nfc_login.kiosk import controller as kc
+from nfc_login.kiosk.nfc_worker import NfcWorker
+from nfc_login.ui.web_kiosk import WebKiosk, serve
+
+
+@pytest.fixture
+def kiosk(services):
+    attendance, _seasons, users = services
+    reader = SimulatedReader()
+    controller = kc.KioskController(attendance, users, reader=reader)
+    kiosk = WebKiosk(controller, {"leaderboard_size": 10}, simulated_reader=reader)
+    server = serve(kiosk, 0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    NfcWorker(reader, controller, kiosk.publish).start()
+    yield kiosk, users, f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+
+
+def post(url, data, headers=None):
+    req = urllib.request.Request(url, data=data.encode(), headers=headers or {})
+    return json.load(urllib.request.urlopen(req))
+
+
+def next_screen(q, title, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        event = q.get(timeout=timeout)
+        if event["type"] == "screen" and event["screen"]["title"] == title:
+            return event["screen"]
+    raise AssertionError(f"no {title!r} screen")
+
+
+def test_keys_and_taps_reach_the_kiosk(kiosk):
+    kiosk, users, base = kiosk
+    users.enroll_tag("04AA", users.add("taylor", "B")["id"])
+    q = kiosk.listen()
+    post(base + "/key", "key=b")
+    assert next_screen(q, "Type your ID")["entry"] == "B___"
+    post(base + "/key", "key=X")
+    post(base + "/tap", "uid=04AA")
+    screen = next_screen(q, "Welcome, taylor!")
+    assert "B001  ·  Impact" in screen["lines"][0] and screen["view"] == "result"
+    assert screen["sound"] == "sign_in" and screen["stats"][1][0] == "Leaderboard"
+    side = json.load(urllib.request.urlopen(base + "/api/kiosk"))
+    assert side["here"][0]["team"] == "Impact" and side["simulated"]
+    assert [k["key"] for k in side["keys"]] == list("ABCD") and side["mentors"]
+    assert side["teams"][-1]["letter"] == "M" and side["here"][0]["letter"] == "B"
+    assert side["sounds"] and side["tap_sounds"]
+
+
+def test_other_web_pages_cant_press_keys(kiosk):
+    _kiosk, _users, base = kiosk
+    for headers in ({"Origin": "http://evil.example"}, {"Host": "evil.example"}):
+        with pytest.raises(urllib.error.HTTPError) as err:
+            post(base + "/key", "key=1", headers)
+        assert err.value.code == 403
+    with pytest.raises(urllib.error.HTTPError) as err:
+        post(base + "/key", "key=Z")
+    assert err.value.code == 400
+
+
+def test_screen_keyboard_types_a_name(kiosk):
+    kiosk, users, base = kiosk
+    users.set_admin_pin("2468")
+    q = kiosk.listen()
+    for key in "*2468#113":     # admin menu, People, Add a person, team 3
+        post(base + "/key", f"key={key}")
+    assert next_screen(q, "Add a person  ·  Sustainability")["keyboard"] == "name"
+    for char in ["r", "i", "v", "back", "x"]:
+        post(base + "/type", f"char={char}")
+    post(base + "/type", "char=done")
+    assert next_screen(q, "Added Rix")["keyboard"] is None
+    assert users.get_by_code("C001")["username"] == "Rix"
+    with pytest.raises(urllib.error.HTTPError) as err:
+        post(base + "/type", "char=toolong")
+    assert err.value.code == 400
+
+
+def test_update_icon_flag(kiosk):
+    kiosk, _users, base = kiosk
+    assert json.load(urllib.request.urlopen(base + "/api/kiosk"))["update"] is False
+    kiosk.updates = type("U", (), {"available": True})()
+    assert json.load(urllib.request.urlopen(base + "/api/kiosk"))["update"] is True
+
+
+def test_background_jobs_can_publish(kiosk):
+    kiosk, _users, _base = kiosk
+    assert kiosk.controller.publish == kiosk.publish
+
+
+def test_keyboard_mode_reaches_the_page(kiosk):
+    kiosk, _users, _base = kiosk
+    q = kiosk.listen()
+    kiosk.publish(kc.Screen("Wi-Fi password for School", ["Type it, then Done."], "prompt",
+                            entry="•••a", keyboard="text"))
+    assert next_screen(q, "Wi-Fi password for School")["keyboard"] == "text"
+    assert kiosk.current()["keyboard"] == "text"
+    kiosk.publish(kc.Screen("Old style", keyboard=True))   # older controllers: names
+    assert next_screen(q, "Old style")["keyboard"] == "name"
+    kiosk.publish(kc.Screen("No keyboard"))
+    assert next_screen(q, "No keyboard")["keyboard"] is None
+
+
+def test_number_pad_and_screen_buttons(kiosk):
+    kiosk, users, base = kiosk
+    users.set_admin_pin("2468")
+    q = kiosk.listen()
+    # The admin gear and the number pad's keys post /key.
+    post(base + "/key", "key=*")
+    pin = next_screen(q, "Enter the admin PIN")
+    assert pin["keyboard"] == "numpad"
+    post(base + "/key", "key=X")      # the back arrow
+    assert next_screen(q, "Tap your card")["keyboard"] is None
+    post(base + "/key", "key=#")      # "No card? Type my ID"
+    assert next_screen(q, "Type your ID")["keyboard"] == "id"
+    for key in "X*2468#":
+        post(base + "/key", f"key={key}")
+    assert next_screen(q, "Admin")["view"] == "admin"
+    post(base + "/key", "key=1")
+    assert next_screen(q, "People")["nav"] == "people"
+    post(base + "/nav", "menu=system")  # the side list
+    assert next_screen(q, "System")["view"] == "menu"
+    with pytest.raises(urllib.error.HTTPError) as err:
+        post(base + "/nav", "menu=nowhere")
+    assert err.value.code == 400
+    page = urllib.request.urlopen(base + "/").read().decode()
+    assert 'id="pad"' in page and "function keyParts(" in page
+
+
+def test_password_symbols_survive_the_trip(kiosk, monkeypatch):
+    kiosk, _users, base = kiosk
+    typed = []
+    monkeypatch.setattr(kiosk.controller, "handle_char", typed.append)
+    chars = list("&=+#%/\\'\"<> Q;?") + ["back", "done"]
+    for char in chars:
+        # Encoded like the page's URLSearchParams (a space becomes "+").
+        post(base + "/type", urllib.parse.urlencode({"char": char}))
+    deadline = time.monotonic() + 3
+    while len(typed) < len(chars) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert typed == chars[:-2] + ["\b", "\n"]
+
+
+def test_screens_say_when_to_spin_and_how_long_they_stay():
+    from nfc_login.ui.web_kiosk import screen_json
+    busy = kc.Screen("Looking for Wi-Fi…", busy=True)
+    held = kc.Screen("Welcome, Rowan!", hold_seconds=6)
+    assert screen_json(busy)["busy"] and screen_json(busy)["hold"] is None
+    assert not screen_json(held)["busy"] and screen_json(held)["hold"] == 6

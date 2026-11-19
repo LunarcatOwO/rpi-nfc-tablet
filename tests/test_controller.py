@@ -1,0 +1,299 @@
+# rpi-nfc-tablet: touch NFC sign-in kiosk for a Raspberry Pi 4 B
+# Created by LunarcatOwO (https://github.com/LunarcatOwO)
+# Copyright (C) 2026 LunarcatOwO
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option)
+# any later version. It comes WITHOUT ANY WARRANTY; see the LICENSE file.
+
+"""The kiosk controller end to end: card taps and touch presses against a simulated reader."""
+
+from nfc_login.hardware.simulated import SimulatedReader
+from nfc_login.kiosk import controller as kc
+from nfc_login.tags import ndef
+
+
+def make(services, capacity=496):
+    attendance, _seasons, users = services
+    reader = SimulatedReader(capacity=capacity)
+    controller = kc.KioskController(attendance, users, reader=reader,
+                                    site_url="https://example.github.io/site/")
+    return controller, reader, users
+
+
+def tap(controller, reader, uid):
+    reader.tap(uid)
+    assert reader.read_uid() == uid
+    return controller.handle_card(uid)
+
+
+def press(controller, keys):
+    screen = None
+    for key in keys:
+        screen = controller.handle_key(key) or screen
+    return screen
+
+
+def card_text(reader, uid):
+    records = ndef.decode_message(ndef.unwrap_tlv(reader.memory[uid]))
+    return [ndef.record_text(r) for r in records]
+
+
+def test_scan_writes_stats_to_card(services, clock):
+    controller, reader, users = make(services)
+    user = users.add("taylor", "C")
+    users.enroll_tag("04AA", user["id"])
+    screen = tap(controller, reader, "04AA")
+    assert screen.title == "Welcome, taylor!" and screen.refresh_leaderboard
+    clock.advance(hours=1, minutes=5)
+    screen = tap(controller, reader, "04AA")
+    assert screen.title == "Goodbye, taylor!"
+    link, text = card_text(reader, "04AA")
+    assert link == "https://example.github.io/site/?id=C001"
+    assert "ID: C001" in text and "Time: 1h 5m" in text and "Rank: #1 of 1" in text
+
+
+def test_card_type_without_ndef_still_signs_in(services):
+    controller, reader, users = make(services, capacity=None)
+    users.enroll_tag("11223344", users.add("taylor", "A")["id"])
+    screen = tap(controller, reader, "11223344")
+    assert screen.title.startswith("Welcome")
+    assert any("can't store info" in line for line in screen.lines)
+
+
+def test_unknown_card_shows_error(services):
+    controller, reader, _users = make(services)
+    assert tap(controller, reader, "FFFF").tone == "error"
+
+
+def test_enrolling_needs_admin_pin(services):
+    controller, reader, users = make(services)
+    users.set_admin_pin("2468")
+    user = users.add("taylor", "B")
+    # Without the PIN, letters only start an ID lookup; there's no way to enroll.
+    press(controller, "B001")
+    assert controller.state == kc.USER_MENU
+    assert press(controller, "*").title == "Type your ID"     # "Not me": type it again
+    press(controller, "X")
+    assert press(controller, "*").title == "Enter the admin PIN"
+    assert press(controller, "2468#").title == "Admin"
+    assert press(controller, "1").title == "People"
+    press(controller, "2")
+    screen = press(controller, "B001")                   # auto-submits after three digits
+    assert controller.state == kc.ENROLL_SCAN and "taylor" in screen.lines[0]
+    screen = tap(controller, reader, "04BEEF")
+    assert screen.title == "Card enrolled" and controller.state == kc.IDLE
+    assert card_text(reader, "04BEEF")[0].endswith("?id=B001")
+    assert tap(controller, reader, "04BEEF").title == "Welcome, taylor!"
+    assert user["code"] == "B001"
+
+
+def test_section_d_and_enter_key(services):
+    controller, _reader, users = make(services)
+    users.add("dee", "D")
+    assert press(controller, "D001").title == "Sign in dee?"
+    # # is Enter mid-ID, so "D1#" is D001 too.
+    press(controller, "*")
+    assert press(controller, "D1#").title == "Sign in dee?"
+
+
+def test_wrong_admin_pin_locks_after_five_tries(services):
+    controller, _reader, users = make(services)
+    users.set_admin_pin("2468")
+    for _ in range(4):
+        assert press(controller, "*1111#").title == "Wrong PIN"
+    assert press(controller, "*1111#").title == "Locked for a minute"
+    assert press(controller, "*").title == "Locked for a minute"
+
+
+def test_sign_in_by_typed_id_with_confirm(services, clock):
+    controller, _reader, users = make(services)
+    users.add("taylor", "A")                                # no PIN needed
+    screen = press(controller, "A001")
+    assert controller.state == kc.USER_MENU and screen.title == "Sign in taylor?"
+    assert "*  Not me      #  Sign in" in screen.lines and screen.view == "dialog"
+    assert screen.person["sub"].startswith("A001  ·  Robot")
+    assert controller.handle_key("1") is None                # other keys do nothing
+    assert press(controller, "#").title == "Welcome, taylor!"
+    clock.advance(minutes=45)
+    assert press(controller, "A001").title == "Sign out taylor?"
+    assert press(controller, "#").title == "Goodbye, taylor!"
+
+
+def test_cancel_on_confirm_signs_no_one_in(services):
+    controller, _reader, users = make(services)
+    user = users.add("taylor", "A")
+    press(controller, "A001")
+    press(controller, "*")
+    assert controller.state != kc.USER_MENU
+    assert not controller.attendance.user_stats(user["id"]).signed_in
+
+
+def test_unknown_id_keeps_typing(services):
+    controller, _reader, _users = make(services)
+    screen = press(controller, "D042")
+    assert screen.tone == "error" and "D042" in screen.lines[0]
+    assert controller.state == kc.USER_ID
+
+
+def test_admin_adjust_hours(services):
+    controller, _reader, users = make(services)
+    users.set_admin_pin("2468")
+    users.add("taylor", "A")
+    press(controller, "*2468#21A001")
+    assert controller.state == kc.ADJUST_AMOUNT
+    screen = press(controller, "130")
+    assert screen.entry == "130  =  1h 30m"
+    screen = press(controller, "A")
+    assert screen.title == "Added 1h 30m" and "New season total: 1h 30m" in screen.lines
+    screen = press(controller, "*2468#21A001")
+    screen = press(controller, "200B")
+    assert screen.tone == "error" and "only has 1h 30m" in screen.lines[0]
+    screen = press(controller, "45B")
+    assert screen.title == "Subtracted 0h 45m"
+
+
+def test_admin_who_is_here(services):
+    controller, reader, users = make(services)
+    users.set_admin_pin("2468")
+    users.enroll_tag("CAFE", users.add("taylor", "D")["id"])
+    tap(controller, reader, "CAFE")
+    screen = press(controller, "*2468#23")
+    assert screen.title == "Here now: 1" and screen.lines[0].startswith("D001  taylor")
+    assert press(controller, "*").title == "Hours"
+    assert press(controller, "*").title == "Admin"
+    press(controller, "*")
+    assert controller.state == kc.IDLE
+
+
+def test_backspace_and_timeout(services):
+    attendance, _seasons, users = services
+    now = [0.0]
+    controller = kc.KioskController(attendance, users, idle_timeout=30,
+                                    monotonic=lambda: now[0])
+    press(controller, "C1")
+    assert controller.buffer == "C1"
+    press(controller, "*")
+    assert controller.buffer == "C"
+    press(controller, "*")
+    assert controller.state == kc.IDLE
+    press(controller, "B")
+    now[0] = 31
+    assert controller.check_timeout() is not None
+    assert controller.state == kc.IDLE
+
+
+def test_sounds_for_kiosk_events(services, clock):
+    controller, reader, users = make(services)
+    users.enroll_tag("04AA", users.add("taylor", "C")["id"])
+    users.set_admin_pin("2468")
+    assert tap(controller, reader, "04AA").chime == "sign_in"
+    assert tap(controller, reader, "04AA").chime == "ignored"        # too soon
+    clock.advance(minutes=20)
+    assert tap(controller, reader, "04AA").chime == "sign_out"
+    assert tap(controller, reader, "0BAD").chime == "error"          # unknown card
+    controller.handle_key("*")
+    assert press(controller, "2468#").chime == "admin"
+
+
+def test_mentors_type_only_a_number(services, clock):
+    controller, reader, users = make(services)
+    mentor = users.add("morgan", "M")
+    assert mentor["code"] == "001"
+    assert press(controller, "001").title == "Sign in morgan?"  # a digit starts a mentor ID
+    assert controller._user_menu_screen().person["sub"].startswith("001  ·  Mentors")
+    assert press(controller, "#").title == "Welcome, morgan!"
+    press(controller, "X")
+    assert press(controller, "1#").title == "Sign out morgan?"  # # enters early
+
+
+def test_scan_shows_the_team_name(services):
+    controller, reader, users = make(services)
+    users.enroll_tag("04AA", users.add("taylor", "B")["id"])
+    screen = tap(controller, reader, "04AA")
+    assert "B001  ·  Impact" in screen.lines[0] and screen.view == "result"
+    assert screen.stats[1] == ("Leaderboard", "#1 of 1")
+
+
+def test_admin_changes_someones_team(services):
+    controller, _reader, users = make(services)
+    users.set_admin_pin("2468")
+    users.add("taylor", "A")
+    screen = press(controller, "*2468#14A001")
+    assert controller.state == kc.PICK_TEAM and "Currently: Robot (A001)" in screen.lines
+    screen = press(controller, "D")                           # letter keys work too
+    assert screen.title == "Team changed" and "Their ID is now D001." in screen.lines
+    assert users.get_by_code("D001")["username"] == "taylor"
+    press(controller, "*2468#14D001")
+    assert press(controller, "*").title == "Change team: user ID"   # back a step
+
+
+def test_admin_adds_a_user_on_the_screen_keyboard(services):
+    controller, reader, users = make(services)
+    users.set_admin_pin("2468")
+    press(controller, "*2468#1")
+    screen = press(controller, "1")
+    assert screen.title == "Add a person: team" and "2  Impact" in screen.lines
+    screen = press(controller, "2")
+    assert screen.keyboard == "name" and screen.entry == "_"
+    for char in " sam  le\bee":
+        screen = controller.handle_char(char)
+    assert screen.entry == "Sam Lee_"
+    screen = controller.handle_char("\n")
+    assert screen.title == "Added Sam Lee" and "Their ID is B001." in screen.lines
+    assert not screen.keyboard
+    screen = tap(controller, reader, "04CC")
+    assert screen.title == "Card enrolled"
+    assert controller.handle_card("04CC").title == "Welcome, Sam Lee!"
+
+
+def test_adding_a_user_without_a_card_and_name_errors(services):
+    controller, _reader, users = make(services)
+    users.set_admin_pin("2468")
+    users.add("Sam Lee", "A")
+    press(controller, "*2468#111")
+    assert controller.handle_char("\n").lines[0] == "Type their name first."
+    for char in "sam lee\n":
+        screen = controller.handle_char(char)
+    assert screen.tone == "error" and screen.keyboard      # name taken: keep typing
+    assert press(controller, "*" * 8).title == "Add a person: team"   # delete, then back
+    press(controller, "1")
+    for char in "alex\n":
+        controller.handle_char(char)
+    screen = press(controller, "*")
+    assert screen.title == "Alex added" and "Their ID is A002." in screen.lines
+    assert controller.state == kc.IDLE
+    assert controller.handle_char("x") is None             # ignored outside the name screen
+
+
+def test_admin_closes_the_kiosk_app(services):
+    controller, _reader, users = make(services)
+    users.set_admin_pin("2468")
+    screen = press(controller, "*2468#36")
+    assert screen.title == "Close the kiosk app?" and not screen.close_app
+    assert press(controller, "*").title == "System"
+    screen = press(controller, "6#")
+    assert screen.close_app and controller.state == kc.IDLE
+    assert screen.lines == ["To start it again, restart the Pi."]
+
+
+def test_back_arrow_and_team_buttons(services):
+    controller, _reader, users = make(services)
+    users.add("taylor", "B")
+    users.set_admin_pin("2468")
+    assert press(controller, "#").keyboard == "id"            # "No card? Type my ID"
+    press(controller, "A0")
+    assert press(controller, "B").entry == "B0__"              # another team swaps the letter
+    assert press(controller, "01").title == "Sign in taylor?"
+    assert press(controller, "X").title == "Type your ID"      # back: type it again
+    press(controller, "C12")
+    assert press(controller, "X").title == "Tap your card"     # back drops what was typed
+    assert controller.handle_key("X") is None                  # nothing behind the start screen
+    press(controller, "*2468#")
+    assert press(controller, "1").nav == "people"
+    assert controller.handle_nav("hours").title == "Hours"     # the side list
+    assert controller.handle_nav("bogus") is None
+    press(controller, "1")                                     # into a task: no side list
+    assert controller.handle_nav("system") is None
