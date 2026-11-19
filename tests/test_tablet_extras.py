@@ -197,3 +197,43 @@ def test_clock_jump_moves_sessions_since_start(services, db, clock):
     clock.advance(days=3, hours=2)                               # 2 hours later, real time
     result = controller.attendance.toggle(alex["id"], "card")
     assert result.session_seconds == 2 * 3600                    # not 3 days and 2 hours
+
+
+def test_sign_in_blocks(services, db, clock):
+    from nfc_login.services.blocks import Block, SignInBlocks
+    controller, users, *_ = make(services)
+    blocks = SignInBlocks(db)
+    controller.attendance.sign_in_blocks = blocks
+    users.enroll_tag("04AA", users.add("Alex Chen", "A")["id"])
+    clock.now = clock.now.replace(hour=8, minute=0)              # Tuesday 1 Sep 2026
+    press(controller, "*2468#28#0900#1500#")                     # 09:00-15:00, Mon-Fri
+    screen = press(controller, "7")                              # add Sunday
+    assert "✓  Sunday" in screen.lines[7]
+    press(controller, "#")
+    assert blocks.list() == [Block("09:00", "15:00", "123457")]
+    press(controller, "XXX")
+    assert controller.handle_card("04AA").title == "Welcome, Alex Chen!"   # 08:00: open
+    clock.advance(hours=2)                                       # 10:00: blocked...
+    assert controller.handle_card("04AA").title.startswith("Goodbye")      # ...but out works
+    clock.advance(minutes=1)
+    screen = controller.handle_card("04AA")
+    assert screen.title == "Signing in is closed" and "from 09:00 to 15:00" in screen.lines[0]
+    assert "closed until 15:00" in controller.idle_screen().lines[0]
+    press(controller, "*2468#22A001")                            # admins still can
+    assert controller.state == kc.IDLE and controller.attendance.user_stats(
+        users.get_by_code("A001")["id"]).signed_in
+    press(controller, "XXX")
+    press(controller, "*2468#22A001")                            # signed out again
+    press(controller, "XXX")
+    clock.advance(days=4)                                        # Saturday: no block
+    assert controller.handle_card("04AA").title.startswith("Welcome")
+
+
+def test_overnight_block():
+    from datetime import datetime
+    from nfc_login.services.blocks import Block
+    night = Block("22:00", "06:00", "5")                         # Friday night
+    assert night.covers(datetime(2026, 9, 4, 23, 0))             # Fri 23:00
+    assert night.covers(datetime(2026, 9, 5, 5, 59))             # Sat 05:59
+    assert not night.covers(datetime(2026, 9, 5, 6, 0))
+    assert not night.covers(datetime(2026, 9, 5, 23, 0))         # Saturday night isn't on

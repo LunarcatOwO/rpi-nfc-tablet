@@ -44,10 +44,12 @@ from nfc_login.services.attendance import (
     SIGNED_OUT,
     AttendanceError,
     AttendanceService,
+    SignInClosed,
     UserStats,
 )
 from nfc_login.services.seasons import SeasonError
 from nfc_login.services.system import SystemActionError, WifiOffError
+from nfc_login.services.blocks import MAX_BLOCKS, Block, days_text
 from nfc_login.services.schedule import ScheduleError, parse_time
 from nfc_login.services.updates import UpdateError
 from nfc_login.services.users import UserError, UserService
@@ -96,6 +98,11 @@ SCHEDULE = "schedule"         # the scheduled sign-out times
 SCHEDULE_TIME = "schedule_time"  # adding one: the time, on the number pad
 SCHEDULE_KEEP = "schedule_keep"  # adding one: keep or drop the hours?
 SCHEDULE_ITEM = "schedule_item"  # one time: keep/drop its hours, or remove it
+BLOCKS = "blocks"             # sign-in blocks: times nobody can sign in
+BLOCK_START = "block_start"   # adding one: from (number pad)
+BLOCK_END = "block_end"       # adding one: until (number pad)
+BLOCK_DAYS = "block_days"     # adding or changing one: which days
+BLOCK_ITEM = "block_item"     # one block: change its days, or remove it
 # System
 UPDATE_CONFIRM = "update_confirm"
 WIFI_LIST = "wifi_list"
@@ -127,6 +134,7 @@ BACK = {
     PAST_LIST: HOURS_MENU, PAST_SEASON: PAST_LIST,
     SCHEDULE: HOURS_MENU, SCHEDULE_TIME: SCHEDULE, SCHEDULE_KEEP: SCHEDULE_TIME,
     SCHEDULE_ITEM: SCHEDULE,
+    BLOCKS: HOURS_MENU, BLOCK_START: BLOCKS, BLOCK_END: BLOCK_START, BLOCK_ITEM: BLOCKS,
     ADJUST_AMOUNT: ADJUST_ID,
     UPDATE_CONFIRM: SYSTEM_MENU, WIFI_LIST: SYSTEM_MENU, ADMINPIN_NEW: SYSTEM_MENU,
     ADMINPIN_OLD: SYSTEM_MENU,
@@ -137,7 +145,7 @@ BACK = {
 VIEWS = {
     ADMIN_MENU: "admin", PEOPLE_MENU: "menu", HOURS_MENU: "menu", SYSTEM_MENU: "menu",
     USER_MENU: "dialog", CONFIRM: "dialog", UPDATE_CONFIRM: "dialog",
-    SCHEDULE_KEEP: "dialog", SCHEDULE_ITEM: "dialog",
+    SCHEDULE_KEEP: "dialog", SCHEDULE_ITEM: "dialog", BLOCK_ITEM: "dialog",
     PICK_TEAM: "teams", NEW_TEAM: "teams", ENROLL_SCAN: "scan", BOARD: "board",
 }
 NAV = {PEOPLE_MENU: "people", HOURS_MENU: "hours", SYSTEM_MENU: "system"}
@@ -153,6 +161,7 @@ MAX_PASSWORD = 63             # longest WPA passphrase
 MAX_WIFI_LIST = 8
 HERE_PAGE = 8                 # people per page on the admin lists
 SEARCH_SHOWN = 4              # name search results that fit above the keyboard
+DAY_NAMES_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 MAX_PIN_FAILURES = 5
 LOCKOUT_SECONDS = 60
 POWER_DELAY_SECONDS = 2       # time to read the screen before the Pi goes down
@@ -176,6 +185,7 @@ HOURS_MENU_LINES = [
     "5  Start a new season",
     "6  Past seasons",
     "7  Scheduled sign-out",
+    "8  Sign-in blocks",
 ]
 
 
@@ -309,7 +319,20 @@ class KioskController:
                  "#  No card? Type my ID      ~  Leaderboard"]
         if self._installing():
             lines = ["Installing an update: cards still work.", *lines]
+        block = self._sign_in_block()
+        if block:
+            lines[-2] = f"Signing in is closed until {block.end}. Signing out still works."
         return Screen("Tap your card", lines, tone="info", view="idle")
+
+    def _sign_in_block(self):
+        """The sign-in block in force now, if any (Hours > Sign-in blocks)."""
+        blocks = getattr(self.attendance, "sign_in_blocks", None)
+        if blocks is None:
+            return None
+        try:
+            return blocks.blocking(self.attendance.clock())
+        except Exception:   # a database hiccup shouldn't stop the start screen
+            return None
 
     def _here_count(self) -> str:
         """"6 here now. " for the admin Hours tile ("" if it can't be counted)."""
@@ -362,6 +385,8 @@ class KioskController:
                 return self._legacy_card(uid, user)
             try:
                 result = self.attendance.scan_tag(uid)
+            except SignInClosed as exc:
+                return self._result("Signing in is closed", [str(exc)], "warning")
             except AttendanceError as exc:
                 return self._result("Not signed in", [str(exc), f"Card {uid}"], "error")
             screen = self._scan_screen(result.action, result.stats, result.session_seconds,
@@ -384,6 +409,8 @@ class KioskController:
                           "warning", toast=True, sound="attention")
         try:
             result = self.attendance.scan_tag(uid)
+        except SignInClosed as exc:
+            return Screen("Signing in is closed", [str(exc)], "warning", toast=True)
         except AttendanceError as exc:
             return Screen("Not signed in", [str(exc)], "error", toast=True)
         stats = result.stats
@@ -494,6 +521,11 @@ class KioskController:
                 SCHEDULE_TIME: self._schedule_time_key,
                 SCHEDULE_KEEP: self._schedule_keep_key,
                 SCHEDULE_ITEM: self._schedule_item_key,
+                BLOCKS: self._blocks_key,
+                BLOCK_START: self._block_time_key,
+                BLOCK_END: self._block_time_key,
+                BLOCK_DAYS: self._block_days_key,
+                BLOCK_ITEM: self._block_item_key,
                 BOARD: self._board_key,
             }.get(self.state)
             if handler:
@@ -733,6 +765,8 @@ class KioskController:
         self._reset()
         try:
             result = self.attendance.toggle(user["id"], method="keypad")  # a typed ID
+        except SignInClosed as exc:
+            return self._result("Signing in is closed", [str(exc)], "warning")
         except AttendanceError as exc:
             return self._result("Not signed in", [str(exc)], "error")
         return self._scan_screen(result.action, result.stats, result.session_seconds,
@@ -837,6 +871,10 @@ class KioskController:
             if self.schedule is None:
                 return self._error_keep_state("Scheduled sign-out isn't set up on this kiosk.")
             return self._go(SCHEDULE, {})
+        if key == "8":
+            if self.attendance.sign_in_blocks is None:
+                return self._error_keep_state("Sign-in blocks aren't set up on this kiosk.")
+            return self._go(BLOCKS, {})
         return None
 
     def _system_choice(self, key: str) -> Screen | None:
@@ -1072,6 +1110,71 @@ class KioskController:
         else:
             return None
         return self._go(SCHEDULE, {})
+
+    # -- sign-in blocks
+
+    def _blocks_key(self, key: str) -> Screen | None:
+        """The list of blocks: a number opens that block, # adds one."""
+        if key == "#":
+            if len(self.attendance.sign_in_blocks.list()) >= MAX_BLOCKS:
+                return self._error_keep_state(f"Up to {MAX_BLOCKS} blocks. Remove one first.")
+            return self._go(BLOCK_START, {})
+        blocks = self.attendance.sign_in_blocks.list()
+        if key.isdigit() and 1 <= int(key) <= len(blocks):
+            return self._go(BLOCK_ITEM, {"block": blocks[int(key) - 1]})
+        return None
+
+    def _block_time_key(self, key: str) -> Screen:
+        """From / until: 4 digits, then OK."""
+        if key.isdigit():
+            if len(self.buffer) < 4:
+                self.buffer += key
+            return self._redraw()
+        if key != "#" or not self.buffer:
+            return self._redraw()
+        try:
+            time = parse_time(self.buffer)
+        except ScheduleError as exc:
+            self.buffer = ""
+            return self._error_keep_state(str(exc))
+        if self.state == BLOCK_START:
+            self.context["start"] = time
+            return self._go(BLOCK_END)
+        if time == self.context["start"]:
+            self.buffer = ""
+            return self._error_keep_state("It has to end at a different time.")
+        self.context.update(end=time, days="12345")   # school days to start with
+        return self._go(BLOCK_DAYS)
+
+    def _block_days_key(self, key: str) -> Screen | None:
+        """1-7 switch a day on or off, # saves."""
+        days = self.context["days"]
+        if key in "1234567" and len(key) == 1:
+            self.context["days"] = (days.replace(key, "") if key in days
+                                    else "".join(sorted(days + key)))
+            return self._redraw()
+        if key != "#":
+            return None
+        if not days:
+            return self._error_keep_state("Pick at least one day.")
+        block = Block(self.context["start"], self.context["end"], days)
+        blocks = self.attendance.sign_in_blocks
+        if "old" in self.context:
+            blocks.replace(self.context["old"], block)
+        else:
+            blocks.add(block)
+        return self._go(BLOCKS, {})
+
+    def _block_item_key(self, key: str) -> Screen | None:
+        """One block: # changes its days, B removes it."""
+        block = self.context["block"]
+        if key == "B":
+            self.attendance.sign_in_blocks.remove(block)
+            return self._go(BLOCKS, {})
+        if key == "#":
+            return self._go(BLOCK_DAYS, {"start": block.start, "end": block.end,
+                                         "days": block.days, "old": block})
+        return None
 
     # -- finding people by name
 
@@ -1500,6 +1603,40 @@ class KioskController:
             return Screen("Leaderboard", [f"Season {season}  ·  {people}",
                                           "?  Find someone's rank"], "info",
                           rows=self._board_rows(entries))
+        if state == BLOCKS:
+            blocks = self.attendance.sign_in_blocks.list()
+            lines = ["Nobody can sign in at these times. Signing out still works, and admins "
+                     "can still sign people in (Hours > Sign someone in or out)."]
+            lines += [f"{n}  {b.start} to {b.end}  ·  {b.days_text}"
+                      for n, b in enumerate(blocks, start=1)]
+            if not blocks:
+                lines += ["", "No blocks yet."]
+            closed = self.attendance.sign_in_blocks.blocking(self.attendance.clock())
+            if closed:
+                lines += ["", f"Signing in is closed right now (until {closed.end})."]
+            lines += ["", "#  Add a block"]
+            return Screen("Sign-in blocks", lines, "prompt")
+        if state in (BLOCK_START, BLOCK_END):
+            digits = self.buffer.ljust(4, "_") if len(self.buffer) < 4 else self.buffer
+            if state == BLOCK_START:
+                title, what = "New block: from", "When does it start?"
+            else:
+                title, what = f"New block: {ctx['start']} until", "When does it end?"
+            return Screen(title, [what, "24-hour clock: 0900 = 9:00 AM,  1530 = 3:30 PM"],
+                          "prompt", entry=f"{digits[:2]}:{digits[2:]}", keyboard="numpad")
+        if state == BLOCK_DAYS:
+            days = ctx["days"]
+            lines = [f"{ctx['start']} to {ctx['end']}: which days?  ({days_text(days)})"]
+            lines += [f"{n}  {'✓' if str(n) in days else '○'}  {name}"
+                      for n, name in enumerate(DAY_NAMES_LONG, start=1)]
+            lines += ["", "#  Save"]
+            return Screen("Sign-in block: days", lines, "prompt")
+        if state == BLOCK_ITEM:
+            block = ctx["block"]
+            return Screen(f"Block {block.start} to {block.end}", [
+                f"Days: {block.days_text}",
+                "*  Cancel      B  Remove      #  Change days",
+            ], "prompt")
         if state == SCHEDULE:
             times = self.schedule.times()
             lines = ["Everyone still signed in is signed out at these times, every day."]

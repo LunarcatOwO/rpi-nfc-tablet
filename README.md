@@ -81,7 +81,9 @@ old system who have no team yet). Every "user ID" screen also has **Search by
 name**. **Hours**: add/subtract, sign someone in or out, who's here, sign
 everyone out, new season, past seasons, and scheduled sign-out (times each day
 when everyone still signed in is signed out, each either counting their hours up
-to then or not). **System**: info,
+to then or not), and sign-in blocks (times on chosen days when nobody can sign
+in, e.g. during class; signing out still works, and admins can still sign
+people in). **System**: info,
 updates, Wi-Fi, admin PIN, restart/close/minimize the app, restart/shut down the
 Pi. The side list jumps between them. Only admins can enroll cards, and anything
 that can't be undone asks "are you sure?" first.

@@ -25,6 +25,7 @@ from nfc_login.config import load_config
 from nfc_login.hardware import create_reader
 from nfc_login.kiosk.controller import KioskController
 from nfc_login.kiosk.nfc_worker import NfcWorker
+from nfc_login.services.blocks import SignInBlocks
 from nfc_login.services.clockguard import ClockGuard
 from nfc_login.services.schedule import AutoSignOut
 from nfc_login.services.system import SystemActions
@@ -64,6 +65,7 @@ def main() -> None:
     if config.updates["enabled"]:
         updates.start()
 
+    services.attendance.sign_in_blocks = SignInBlocks(services.db)   # Hours > Sign-in blocks
     controller = KioskController(
         services.attendance,
         services.users,

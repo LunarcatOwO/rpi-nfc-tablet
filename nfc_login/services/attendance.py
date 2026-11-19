@@ -35,6 +35,10 @@ class AttendanceError(Exception):
     """A problem that should be shown to the person at the kiosk."""
 
 
+class SignInClosed(AttendanceError):
+    """Signing in is blocked right now (Hours > Sign-in blocks)."""
+
+
 @dataclass
 class UserStats:
     """One person's totals for the current season, as shown after a scan."""
@@ -84,6 +88,7 @@ class AttendanceService:
         self.min_interval = timedelta(seconds=min_scan_interval_seconds)
         self.max_session = timedelta(hours=max_session_hours)
         self.clock = clock  # swapped for a fake clock in the tests
+        self.sign_in_blocks = None  # SignInBlocks: times when only admins can sign people in
 
     # ------------------------------------------------------------ lookups
 
@@ -138,6 +143,12 @@ class AttendanceService:
                     repo.close_session(cur, open_session["id"], now, method, session_seconds)
                     action = SIGNED_OUT
             else:  # they're signed out: this scan signs them in
+                block = (self.sign_in_blocks.blocking(now)
+                         if self.sign_in_blocks and method != "admin" else None)
+                if block:
+                    raise SignInClosed(
+                        f"Closed from {block.start} to {block.end} ({block.days_text}). "
+                        "Signing out still works.")
                 last_out = repo.get_last_sign_out(cur, user_id)
                 if last_out and now - last_out < self.min_interval:
                     action = IGNORED
