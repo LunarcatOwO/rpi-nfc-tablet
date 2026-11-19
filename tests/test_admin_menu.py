@@ -199,9 +199,11 @@ def test_card_tap_during_a_job(services):
     controller, users, jobs, published, _system = make(services)
     users.enroll_tag("04AA", users.add("Taylor", "A")["id"])
     press(controller, "*2468#32")
-    assert controller.handle_card("04AA").title == "Welcome, Taylor!"   # cards always work
+    screen = controller.handle_card("04AA")     # cards always work: a pop-up, the job carries on
+    assert screen.toast and screen.title == "Taylor signed in" and controller.state == kc.BUSY
     jobs.run()
-    assert published == [] and controller.state == kc.IDLE   # the check's menu is dropped
+    assert published and not published[-1].toast
+    press(controller, "XXX")
     controller.updates.found = 2
     press(controller, "*2468#32")
     jobs.run()
@@ -377,7 +379,8 @@ def test_nothing_else_while_an_update_installs(services):
     controller.updates.installing = True
     assert "Installing an update" in controller.idle_screen().lines[0]
     users.enroll_tag("04AA", users.add("Taylor", "A")["id"])
-    controller.handle_card("04AA")             # a card cancels the menu, not the install
+    assert controller.handle_card("04AA").toast   # a card is a pop-up over the install
+    controller._reset()                        # (as if the app restarted mid-install)
     for key in "235678":
         screen = press(controller, "*2468#3" + key)
         assert screen.tone == "error" and "being installed" in screen.lines[0], key
@@ -462,7 +465,7 @@ def test_screens_tell_the_page_how_to_lay_out(services):
     """Each screen says its keyboard and view; the page draws "K  label" lines as buttons."""
     controller, users, _jobs, _published, _system = make(services)
     idle = controller.idle_screen()
-    assert idle.view == "idle" and "#  No card? Type my ID" in idle.lines
+    assert idle.view == "idle" and "#  No card? Type my ID      ~  Leaderboard" in idle.lines
     screen = press(controller, "#")                           # # on the start screen: type an ID
     assert controller.state == kc.USER_ID and screen.keyboard == "id"
     assert press(controller, "*").title == "Tap your card"
@@ -520,7 +523,7 @@ def test_past_seasons(services, clock):
     controller, users, _jobs, _published, _system = make(services)
     screen = press(controller, "*2468#26")
     assert screen.title == "Past seasons: 0" and screen.lines[0].startswith("None yet")
-    press(controller, "*")
+    press(controller, "***")
     taylor = users.add("Taylor", "B")
     users.enroll_tag("04AA", taylor["id"])
     users.add("Robin", "A")                                   # no time: left off the list

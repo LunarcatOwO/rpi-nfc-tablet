@@ -1,0 +1,199 @@
+# rpi-nfc-tablet: touch NFC sign-in kiosk for a Raspberry Pi 4 B
+# Created by LunarcatOwO (https://github.com/LunarcatOwO)
+# Copyright (C) 2026 LunarcatOwO
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option)
+# any later version. It comes WITHOUT ANY WARRANTY; see the LICENSE file.
+
+"""Name search, people's pages, the leaderboard screen, pop-ups, scheduled sign-out
+and clock jumps."""
+
+from __future__ import annotations
+
+from datetime import timedelta
+
+from nfc_login.db import repository as repo
+from nfc_login.kiosk import controller as kc
+from nfc_login.services.clockguard import ClockGuard
+from nfc_login.services.schedule import AutoSignOut, ScheduleError, parse_time
+
+from tests.test_admin_menu import make, press
+
+
+def type_text(controller, text):
+    screen = None
+    for char in text:
+        screen = controller.handle_char(char) or screen
+    return screen
+
+
+def add_imported(db, name, number):
+    """Someone brought over from the old system, with no team yet (U001...)."""
+    with db.transaction() as cur:
+        cur.execute("INSERT INTO users (section, number, username, is_active, created_at) "
+                    "VALUES ('U', %s, %s, 1, NOW())", (number, name))
+        return cur.lastrowid
+
+
+def test_find_someone_by_name_and_edit_an_imported_person(services, db):
+    controller, users, *_ = make(services)
+    users.add("Alex Chen", "A")
+    users.add("Sam Rivera", "B")
+    add_imported(db, "Avery Santos", 1)
+    screen = press(controller, "*2468#18")
+    assert controller.state == kc.NAME_SEARCH and screen.keyboard == "name"
+    screen = type_text(controller, "a")
+    assert [r["name"] for r in screen.rows] == ["Alex Chen", "Avery Santos", "Sam Rivera"]
+    screen = type_text(controller, "v")
+    assert [r["name"] for r in screen.rows] == ["Avery Santos"]
+    assert screen.rows[0]["sub"].startswith("U001")
+    screen = press(controller, "1")                              # their page
+    assert controller.state == kc.PERSON and screen.person["name"] == "Avery Santos"
+    assert "1  Change team" in screen.lines
+    screen = press(controller, "1")                              # straight to the teams
+    assert controller.state == kc.PICK_TEAM and screen.view == "teams"
+    assert press(controller, "X").title == "Avery Santos"       # back: their page again
+    assert press(controller, "X").entry == "Av_"                 # back: the search, as it was
+    press(controller, "1")
+    press(controller, "1")
+    screen = press(controller, "2")                              # Impact
+    assert screen.title == "Team changed" and "B002" in screen.lines[1]
+
+
+def test_search_by_name_from_an_id_screen(services):
+    controller, users, *_ = make(services)
+    users.add("Quinn Foster", "C")
+    screen = press(controller, "*2468#12")                       # Enroll a card: user ID
+    assert "?  Search by name" in screen.lines
+    press(controller, "?")
+    type_text(controller, "qu")
+    screen = controller.handle_char("\n")                        # Done picks the first one
+    assert controller.state == kc.ENROLL_SCAN and "Quinn Foster" in screen.lines[0]
+    assert "?  Search by name" not in press(controller, "XX#").lines   # not for sign-in
+
+
+def test_deactivated_people_only_found_where_it_makes_sense(services):
+    controller, users, *_ = make(services)
+    robin = users.add("Robin Alder", "B")
+    users.set_active(robin["code"], False)
+    press(controller, "*2468#12?")
+    assert type_text(controller, "rob").rows == []
+    press(controller, "XX6?")                                    # Deactivate / reactivate
+    screen = type_text(controller, "rob")
+    assert screen.rows[0]["sub"].endswith("deactivated")
+    assert press(controller, "1").title == "Reactivate Robin Alder?"
+
+
+def test_leaderboard_screen_and_rank_search(services, clock):
+    controller, users, *_ = make(services)
+    alex, sam = users.add("Alex Chen", "A"), users.add("Sam Rivera", "B")
+    users.add("Jordan Lee", "C")
+    controller.attendance.adjust(alex["id"], 3600)
+    controller.attendance.adjust(sam["id"], 7200)
+    screen = press(controller, "~")
+    assert screen.view == "board" and controller.state == kc.BOARD
+    assert [(r["rank"], r["name"]) for r in screen.rows] == [
+        (1, "Sam Rivera"), (2, "Alex Chen"), (None, "Jordan Lee")]   # no time: no rank
+    press(controller, "?")
+    screen = type_text(controller, "alex")
+    assert screen.rows[0]["rank"] == 2 and screen.rows[0]["right"] == "1h 00m"
+    screen = controller.handle_char("\n")                       # Done: only the matches
+    assert controller.state == kc.BOARD and len(screen.rows) == 1
+    assert "#  Show everyone" in screen.lines[-1]
+    assert len(press(controller, "#").rows) == 3
+    assert press(controller, "X").view == "idle"
+
+
+def test_a_card_mid_menu_is_a_popup(services, db):
+    controller, users, *_ = make(services)
+    users.enroll_tag("04AA", users.add("Taylor Kim", "A")["id"])
+    press(controller, "*2468#1")
+    screen = controller.handle_card("04AA")
+    assert screen.toast and screen.title == "Taylor Kim signed in"
+    assert controller.state == kc.PEOPLE_MENU                    # the menu stays
+    imported = add_imported(db, "Avery Santos", 1)
+    users.enroll_tag("04BB", imported)
+    screen = controller.handle_card("04BB")                      # picking a team needs the screen
+    assert screen.toast and "start screen" in screen.lines[0]
+    assert controller.state == kc.PEOPLE_MENU
+    press(controller, "XX")
+    assert controller.handle_card("04BB").title == "Welcome, Avery Santos!"   # from the start
+
+
+def test_cards_dont_keep_an_admin_menu_open(services):
+    controller, users, *_ = make(services)
+    users.enroll_tag("04AA", users.add("Taylor Kim", "A")["id"])
+    now = [0.0]
+    controller.monotonic = lambda: now[0]
+    press(controller, "*2468#")
+    now[0] = 25
+    controller.handle_card("04AA")
+    now[0] = 31
+    assert controller.check_timeout().view == "idle"
+
+
+def test_scheduled_sign_out(services, db, clock):
+    controller, users, *_ = make(services)
+    schedule = AutoSignOut(db, clock=clock)
+    controller.schedule = schedule
+    alex = users.add("Alex Chen", "A")
+    sam = users.add("Sam Rivera", "B")
+    clock.now = clock.now.replace(hour=15, minute=0)
+    press(controller, "*2468#27#2100#")                          # 21:00, keep their hours
+    press(controller, "#")
+    press(controller, "#1530#B")                                 # 15:30, drop them
+    assert schedule.times() == [("15:30", False), ("21:00", True)]
+    assert controller.state == kc.SCHEDULE
+    controller.attendance.toggle(alex["id"], "card")
+    clock.advance(minutes=20)
+    controller.attendance.toggle(sam["id"], "card")
+    clock.advance(minutes=40)                                    # 16:00: past 15:30
+    toast = controller.background_checks()
+    assert toast.toast and toast.title == "Scheduled sign-out: 2 signed out"
+    assert controller.attendance.user_stats(alex["id"]).total_seconds == 0   # dropped
+    assert controller.background_checks() is None                # only once
+    controller.attendance.toggle(alex["id"], "card")             # back in at 16:00
+    clock.advance(hours=6)                                       # 22:00: an hour late
+    controller.background_checks()
+    stats = controller.attendance.user_stats(alex["id"])
+    assert not stats.signed_in and stats.total_seconds == 5 * 3600   # counted to 21:00
+    controller.attendance.toggle(sam["id"], "card")
+    clock.advance(days=2, hours=13)                              # the Pi was off: no late run
+    assert schedule.run_due() == [] and controller.attendance.user_stats(sam["id"]).signed_in
+    press(controller, "1B")                                      # remove 15:30
+    assert schedule.times() == [("21:00", True)]
+    press(controller, "1#")                                      # 21:00 now drops hours
+    assert schedule.times() == [("21:00", False)]
+
+
+def test_schedule_times_must_be_real():
+    assert parse_time("930") == "09:30" and parse_time("2100") == "21:00"
+    for bad in ("2460", "2500", "12", ""):
+        try:
+            parse_time(bad)
+        except ScheduleError:
+            continue
+        raise AssertionError(bad)
+
+
+def test_clock_jump_moves_sessions_since_start(services, db, clock):
+    controller, users, *_ = make(services)
+    alex = users.add("Alex Chen", "A")
+    wall, mono = [1_000_000.0], [50.0]
+    guard = ClockGuard(db, wall=lambda: wall[0], monotonic=lambda: mono[0])
+    guard._since = clock.now - timedelta(minutes=1)
+    controller.attendance.toggle(alex["id"], "card")             # signed in on the old time
+    wall[0] += 30
+    mono[0] += 30
+    assert guard.check() == 0                                    # time moving on normally
+    wall[0] += 3 * 86400                                         # the internet sets the clock
+    assert guard.check() == 3 * 86400
+    with db.transaction() as cur:
+        session = repo.get_open_session(cur, alex["id"])
+    assert session["sign_in_at"] == clock.now + timedelta(days=3)
+    clock.advance(days=3, hours=2)                               # 2 hours later, real time
+    result = controller.attendance.toggle(alex["id"], "card")
+    assert result.session_seconds == 2 * 3600                    # not 3 days and 2 hours

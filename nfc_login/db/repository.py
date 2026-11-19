@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from nfc_login.legacy.rfid import legacy_key_for_uid
 from nfc_login.services.ids import with_code
@@ -314,3 +314,16 @@ def set_setting(cur, name: str, value: str) -> None:
         "ON DUPLICATE KEY UPDATE value = VALUES(value)",
         (name, value),
     )
+
+
+def shift_sessions(cur, since: datetime, delta: timedelta) -> int:
+    """Move every session time recorded since ``since`` by ``delta`` (the clock jumped)."""
+    seconds = int(delta.total_seconds())
+    cur.execute(
+        "UPDATE sessions SET "
+        "  sign_out_at = IF(sign_out_at IS NULL, NULL, sign_out_at + INTERVAL %s SECOND), "
+        "  sign_in_at = sign_in_at + INTERVAL %s SECOND "
+        "WHERE sign_in_at >= %s",
+        (seconds, seconds, since),
+    )
+    return cur.rowcount

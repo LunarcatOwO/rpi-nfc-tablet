@@ -92,3 +92,12 @@ def test_sections_must_not_share_keys(tmp_path):
 def test_example_config_loads():
     config = load_config("config.example.toml")
     assert config.hardware["nfc"]["write_tags"] is True
+
+
+def test_a_team_without_a_key_uses_its_letter():
+    from nfc_login.config import _check_sections
+    sections = [{"letter": "F", "name": "Fabrication"}, {"letter": "M", "name": "Mentors"}]
+    _check_sections(sections)
+    assert sections[0]["key"] == "F" and sections[1]["key"] == ""
+    with pytest.raises(ValueError):
+        _check_sections([{"letter": "X", "name": "Xtra"}])   # X is the back arrow's key

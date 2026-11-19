@@ -178,7 +178,9 @@ def _check_sections(sections: list[dict]) -> None:
         # picks up the new one without anyone editing the file.
         if section["letter"] == "D" and section.get("name") == "Strategy":
             section["name"], section["short"] = "Game Performance", "Game"
-        section["key"] = section.get("key", "").upper()
+        # A team's button sends its letter unless "key" says otherwise; mentors have none.
+        default_key = "" if section["letter"] == MENTORS else section["letter"]
+        section["key"] = section.get("key", default_key).upper()
         section.setdefault("short", section["name"][:8])
         letter, key = section["letter"], section["key"]
         if len(letter) != 1 or not letter.isalpha():

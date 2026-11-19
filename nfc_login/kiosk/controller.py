@@ -19,9 +19,13 @@
 #   #    the main action (Enter, Sign in, Yes...)
 #   *    delete one character; from the start screen, the admin gear (asks for the PIN)
 #   X    the back arrow (or a swipe in from the left): back one step, whatever is typed
+#   ?    "Search by name" on the admin ID screens and the leaderboard
+#   ~    the start screen's Leaderboard button
 # Admin menu: 1 People, 2 Hours, 3 System (see the *_MENU_LINES below); the side
 # list in those menus jumps between them with handle_nav().
-# Names and Wi-Fi passwords come from the on-screen keyboard via handle_char().
+# Names, name searches and Wi-Fi passwords come from the on-screen keyboard via
+# handle_char(). A card tapped while someone is in admin or the leaderboard shows a
+# small pop-up (Screen.toast) and leaves that screen as it was.
 
 from __future__ import annotations
 
@@ -44,6 +48,7 @@ from nfc_login.services.attendance import (
 )
 from nfc_login.services.seasons import SeasonError
 from nfc_login.services.system import SystemActionError, WifiOffError
+from nfc_login.services.schedule import ScheduleError, parse_time
 from nfc_login.services.updates import UpdateError
 from nfc_login.services.users import UserError, UserService
 from nfc_login.tags.payload import TagTooSmall, build_message
@@ -56,6 +61,8 @@ USER_ID = "user_id"           # typing an ID from the idle screen
 USER_MENU = "user_menu"       # confirm screen after typing an ID: # signs in/out
 ADMIN_PIN = "admin_pin"
 BUSY = "busy"                 # a background job (Wi-Fi, update, power) is running
+BOARD = "board"               # the whole leaderboard (context["query"] filters it)
+BOARD_SEARCH = "board_search"  # typing a name to find someone's rank
 
 ADMIN_MENU = "admin_menu"
 PEOPLE_MENU = "people_menu"
@@ -76,6 +83,8 @@ PICK_TEAM = "pick_team"       # a team is chosen (legacy card's owner, or admin 
 RENAME_ID = "rename_id"
 RENAME_NAME = "rename_name"
 ACTIVE_ID = "active_id"       # whom to deactivate / reactivate
+NAME_SEARCH = "name_search"   # admin: find someone by name, for context["for"]
+PERSON = "person"             # admin: one person's page, with everything to change
 # Hours
 ADJUST_ID = "adjust_id"
 ADJUST_AMOUNT = "adjust_amount"
@@ -83,6 +92,10 @@ TOGGLE_ID = "toggle_id"       # sign someone in or out without a PIN
 SEASON_PIN = "season_pin"     # admin PIN again before starting a new season
 PAST_LIST = "past_list"       # the finished seasons, to pick one
 PAST_SEASON = "past_season"   # one finished season's hours, a page at a time
+SCHEDULE = "schedule"         # the scheduled sign-out times
+SCHEDULE_TIME = "schedule_time"  # adding one: the time, on the number pad
+SCHEDULE_KEEP = "schedule_keep"  # adding one: keep or drop the hours?
+SCHEDULE_ITEM = "schedule_item"  # one time: keep/drop its hours, or remove it
 # System
 UPDATE_CONFIRM = "update_confirm"
 WIFI_LIST = "wifi_list"
@@ -96,7 +109,12 @@ ID_STATES = (USER_ID, ENROLL_ID, ADJUST_ID, MOVE_ID, UNCARD_ID, RENAME_ID, ACTIV
              TOGGLE_ID)
 PIN_STATES = (ADMIN_PIN, ADMINPIN_NEW, ADMINPIN_AGAIN, SEASON_PIN, ADMINPIN_OLD)
 NAME_STATES = (NEW_NAME, RENAME_NAME)
-TEXT_STATES = (*NAME_STATES, WIFI_PASSWORD)
+TEXT_STATES = (*NAME_STATES, WIFI_PASSWORD, NAME_SEARCH, BOARD_SEARCH)
+# A card tapped on these screens takes over the whole screen; anywhere else
+# (admin, the leaderboard) it shows a pop-up and the screen stays as it was.
+FULL_SCREEN_SCANS = (IDLE, USER_ID, USER_MENU, ENROLL_SCAN)
+# The steps an action on someone's page can lead to: back from them returns there.
+AFTER_PERSON = (PICK_TEAM, RENAME_NAME, ADJUST_AMOUNT, ENROLL_SCAN, CONFIRM)
 
 # Where * goes from an empty entry.
 BACK = {
@@ -107,6 +125,8 @@ BACK = {
     ACTIVE_ID: PEOPLE_MENU, OFF_LIST: PEOPLE_MENU, NEW_NAME: NEW_TEAM, RENAME_NAME: RENAME_ID,
     ADJUST_ID: HOURS_MENU, TOGGLE_ID: HOURS_MENU, SEASON_PIN: HOURS_MENU, HERE_LIST: HOURS_MENU,
     PAST_LIST: HOURS_MENU, PAST_SEASON: PAST_LIST,
+    SCHEDULE: HOURS_MENU, SCHEDULE_TIME: SCHEDULE, SCHEDULE_KEEP: SCHEDULE_TIME,
+    SCHEDULE_ITEM: SCHEDULE,
     ADJUST_AMOUNT: ADJUST_ID,
     UPDATE_CONFIRM: SYSTEM_MENU, WIFI_LIST: SYSTEM_MENU, ADMINPIN_NEW: SYSTEM_MENU,
     ADMINPIN_OLD: SYSTEM_MENU,
@@ -117,7 +137,8 @@ BACK = {
 VIEWS = {
     ADMIN_MENU: "admin", PEOPLE_MENU: "menu", HOURS_MENU: "menu", SYSTEM_MENU: "menu",
     USER_MENU: "dialog", CONFIRM: "dialog", UPDATE_CONFIRM: "dialog",
-    PICK_TEAM: "teams", NEW_TEAM: "teams", ENROLL_SCAN: "scan",
+    SCHEDULE_KEEP: "dialog", SCHEDULE_ITEM: "dialog",
+    PICK_TEAM: "teams", NEW_TEAM: "teams", ENROLL_SCAN: "scan", BOARD: "board",
 }
 NAV = {PEOPLE_MENU: "people", HOURS_MENU: "hours", SYSTEM_MENU: "system"}
 CONFIRM_VERBS = {"restart_app": "Restart", "close_app": "Close it", "reboot": "Restart",
@@ -131,6 +152,7 @@ SETUP_REMINDER = "Setup changed in an update: run bash scripts/setup-pi.sh"
 MAX_PASSWORD = 63             # longest WPA passphrase
 MAX_WIFI_LIST = 8
 HERE_PAGE = 8                 # people per page on the admin lists
+SEARCH_SHOWN = 4              # name search results that fit above the keyboard
 MAX_PIN_FAILURES = 5
 LOCKOUT_SECONDS = 60
 POWER_DELAY_SECONDS = 2       # time to read the screen before the Pi goes down
@@ -144,6 +166,7 @@ PEOPLE_MENU_LINES = [
     "5  Rename someone",
     "6  Deactivate / reactivate",
     "7  Deactivated people",
+    "8  Find someone by name",
 ]
 HOURS_MENU_LINES = [
     "1  Add / subtract hours",
@@ -152,6 +175,7 @@ HOURS_MENU_LINES = [
     "4  Sign everyone out",
     "5  Start a new season",
     "6  Past seasons",
+    "7  Scheduled sign-out",
 ]
 
 
@@ -187,6 +211,10 @@ class Screen:
     minimize_app: bool = False          # the window should minimize (kiosk keeps running)
     restart_app: bool = False           # the app should restart itself (e.g. after an update)
     busy: bool = False                  # waiting on a background job: show a spinner
+    # People as rows (leaderboard, name search): [{"name", "sub", "team", "right",
+    # "rank", "key"}]; a row with a "key" is a button sending it.
+    rows: list = field(default_factory=list)
+    toast: bool = False                 # a pop-up over whatever is showing (card tapped mid-menu)
 
     @property
     def chime(self) -> str | None:
@@ -236,6 +264,8 @@ class KioskController:
         spawn: Callable[[Callable[[], None]], None] = _start_thread,
         sleep: Callable[[float], None] = time.sleep,
         reopen_hint: str = "To start it again, restart the Pi.",
+        schedule=None,
+        clock_guard=None,
     ):
         self.attendance = attendance
         self.users = users
@@ -248,6 +278,8 @@ class KioskController:
         self.seasons = seasons      # SeasonService, for "Start a new season"
         self.system = system        # SystemActions: info, Wi-Fi, power
         self.updates = updates      # UpdateChecker
+        self.schedule = schedule    # AutoSignOut: Hours > Scheduled sign-out
+        self.clock_guard = clock_guard   # ClockGuard: fixes times when the clock jumps
         self._spawn = spawn
         self._sleep = sleep
         self.reopen_hint = reopen_hint   # shown when the app is closed from the menu
@@ -274,7 +306,7 @@ class KioskController:
     def idle_screen(self) -> Screen:
         """The start screen: tap a card, or type an ID."""
         lines = ["Hold it on the reader to sign in or out.",
-                 "#  No card? Type my ID"]
+                 "#  No card? Type my ID      ~  Leaderboard"]
         if self._installing():
             lines = ["Installing an update: cards still work.", *lines]
         return Screen("Tap your card", lines, tone="info", view="idle")
@@ -312,6 +344,10 @@ class KioskController:
     def handle_card(self, uid: str) -> Screen:
         """A card was tapped (called from the NFC thread)."""
         with self._lock:  # never at the same time as a key press
+            if self.state not in FULL_SCREEN_SCANS and not self.context.get("legacy"):
+                # Not counted as a touch: cards tapped by passers-by mustn't keep an
+                # admin menu open after the admin walks away.
+                return self._toast_scan(uid)
             self._last_input = self.monotonic()
             if self.state == ENROLL_SCAN:  # an admin is enrolling this card
                 return self._enroll(uid)
@@ -334,6 +370,37 @@ class KioskController:
                 # The card is still on the reader: write the new stats onto it.
                 screen.lines.extend(self._write_card(result.stats))
             return screen
+
+    def _toast_scan(self, uid: str) -> Screen:
+        """A card tapped mid-menu: sign them in or out, and say so in a pop-up."""
+        try:
+            user = self.attendance.user_for_tag(uid)
+        except AttendanceError:
+            user = None
+        if user and user["section"] == ids.UNSORTED:
+            # Picking a team needs the whole screen, so that waits for the start screen.
+            return Screen(f"{user['username']}: not signed in",
+                          ["Pick your team first: tap again on the start screen."],
+                          "warning", toast=True, sound="attention")
+        try:
+            result = self.attendance.scan_tag(uid)
+        except AttendanceError as exc:
+            return Screen("Not signed in", [str(exc)], "error", toast=True)
+        stats = result.stats
+        team = self.users.team_name(stats.section, short=True)
+        if result.action == SIGNED_IN:
+            title, sound = f"{stats.username} signed in", "sign_in"
+        elif result.action == SIGNED_OUT:
+            title, sound = f"{stats.username} signed out", "sign_out"
+        else:
+            title, sound = stats.username, "ignored"
+        lines = [*result.notes, f"{stats.code}  ·  {team}  ·  {stats.total_text}"]
+        if result.action != IGNORED:
+            lines += self._write_card(stats)
+        return Screen(title, lines, "success" if result.action != IGNORED else "warning",
+                      toast=True, sound=sound, person={"name": stats.username, "sub": "",
+                                                       "team": stats.section},
+                      refresh_leaderboard=result.action != IGNORED)
 
     def _legacy_card(self, uid: str, user: dict) -> Screen:
         """An imported card with no team yet: its owner picks one first."""
@@ -422,6 +489,12 @@ class KioskController:
                 OFF_LIST: self._here_list_key,   # same paging
                 PAST_SEASON: self._here_list_key,
                 PAST_LIST: self._past_list_key,
+                PERSON: self._person_key,
+                SCHEDULE: self._schedule_key,
+                SCHEDULE_TIME: self._schedule_time_key,
+                SCHEDULE_KEEP: self._schedule_keep_key,
+                SCHEDULE_ITEM: self._schedule_item_key,
+                BOARD: self._board_key,
             }.get(self.state)
             if handler:
                 return handler(key)
@@ -464,11 +537,37 @@ class KioskController:
             self._last_input = self.monotonic()
             return self._go(target, {})
 
+    def background_checks(self) -> Screen | None:
+        """Called every few seconds: fix times after a clock jump, then run any
+        scheduled sign-out (a pop-up says so)."""
+        with self._lock:
+            if self.clock_guard is not None:
+                try:
+                    self.clock_guard.check()
+                except Exception:   # the database being down mustn't stop the kiosk
+                    log.exception("clock check failed")
+            if self.schedule is None:
+                return None
+            try:
+                ran = self.schedule.run_due()
+            except Exception:
+                log.exception("scheduled sign-out failed")
+                return None
+            people = sum(count for _, _, count in ran)
+            if not ran or not people:
+                return None
+            kept = all(keep for _, keep, count in ran if count)
+            return Screen(f"Scheduled sign-out: {people} signed out", [
+                "Their hours up to then count." if kept else "Their hours this time weren't counted.",
+            ], "info", toast=True, sound="sign_out", refresh_leaderboard=True)
+
     def check_timeout(self) -> Screen | None:
         """Go back to the start screen when nobody has touched it for a while."""
         with self._lock:
+            # The leaderboard gets longer: scrolling it doesn't count as a touch.
+            limit = self.idle_timeout * (3 if self.state == BOARD else 1)
             if (self.state not in (IDLE, BUSY)
-                    and self.monotonic() - self._last_input > self.idle_timeout):
+                    and self.monotonic() - self._last_input > limit):
                 self._reset()
                 return self.idle_screen()
             return None
@@ -490,6 +589,18 @@ class KioskController:
         self.buffer = ""
         if self.state in MENUS and self.context.pop("viewing", False):
             return self._redraw()
+        if self.context.get("from_person") and self.state in AFTER_PERSON:
+            return self._open_person(self.context["user"]["id"])
+        if self.state == NAME_SEARCH:   # back to the ID screen (or People)
+            back = self.context["for"]
+            return self._go(PEOPLE_MENU if back == PERSON else back, {})
+        if self.state == PERSON:        # back to the search, as it was
+            query = self.context.get("query", "")
+            self._go(NAME_SEARCH, {"for": PERSON})
+            self.buffer = query
+            return self._redraw()
+        if self.state == BOARD_SEARCH:
+            return self._go(BOARD, {})
         if self.state == PICK_TEAM and "uid" not in self.context:
             return self._go(MOVE_ID)
         if self.state == ADMIN_PIN and self.context.get("legacy"):
@@ -519,12 +630,16 @@ class KioskController:
             return self._id_key(key)
         if key == "#":
             return self._go(USER_ID, {})      # "No card? Type my ID"
+        if key == "~":
+            return self._go(BOARD, {})        # the Leaderboard button
         return self.idle_screen()
 
     # -- typing an ID (team letter + digits, or a mentor's digits)
 
     def _id_key(self, key: str) -> Screen | None:
         """A key while typing an ID; submits by itself once it's complete."""
+        if key == "?" and self.state != USER_ID:   # admin: find them by name instead
+            return self._go(NAME_SEARCH, {"for": self.state})
         if key in self.section_keys and self.buffer:
             # Another team tapped: swap the letter, keep the digits typed so far.
             self.buffer = self.section_keys[key] + "".join(c for c in self.buffer if c.isdigit())
@@ -551,34 +666,44 @@ class KioskController:
         code, self.buffer = self.buffer, ""
         try:
             user = self.users.get_by_code(code)
-            # Only "Deactivate / reactivate" works on someone who's switched off.
-            if not user["is_active"] and self.state != ACTIVE_ID:
-                raise UserError(f"{user['code']} is deactivated.")
         except UserError as exc:
             return self._error_keep_state(str(exc))
-        self.context = {"user": user}
+        return self._use_user(user, self.state)
+
+    def _use_user(self, user: dict, purpose: str, from_person: bool = False) -> Screen:
+        """Go on with ``user`` for ``purpose`` (the ID screen that asked, e.g. MOVE_ID).
+
+        Used after typing an ID, picking a name search result, or tapping an
+        action on someone's page (from_person: back returns to that page).
+        """
+        # Only "Deactivate / reactivate" works on someone who's switched off.
+        if not user["is_active"] and purpose != ACTIVE_ID:
+            return self._error_keep_state(f"{user['code']} is deactivated.")
+        self.context = {"user": user, "from_person": from_person}
         # What happens next depends on which screen asked for the ID.
-        if self.state == USER_ID:
+        if purpose == USER_ID:
             self.state = USER_MENU
             return self._user_menu_screen()
-        if self.state == TOGGLE_ID:
+        if purpose == TOGGLE_ID:
             return self._admin_toggle(user)
-        if self.state == UNCARD_ID:
+        if purpose == UNCARD_ID:
             uids = [t["uid"] for t in self.users.list_tags()
                     if t["user_id"] == user["id"] and t["is_active"]]
             if not uids:
                 return self._error_keep_state(f"{user['username']} has no cards.")
-            return self._confirm("remove_cards", PEOPLE_MENU, user=user, uids=uids)
-        if self.state == ACTIVE_ID:
-            return self._confirm("toggle_active", PEOPLE_MENU, user=user)
-        if self.state == RENAME_ID:
+            return self._confirm("remove_cards", PEOPLE_MENU, user=user, uids=uids,
+                                 from_person=from_person)
+        if purpose == ACTIVE_ID:
+            return self._confirm("toggle_active", PEOPLE_MENU, user=user,
+                                 from_person=from_person)
+        if purpose == RENAME_ID:
             self.state = RENAME_NAME
             self.buffer = user["username"][:MAX_NAME]   # edit the current name
             self.context["cut"] = len(user["username"]) > MAX_NAME
             return self._redraw()
         # The rest just move on to their next step.
         nxt = {ENROLL_ID: ENROLL_SCAN, MOVE_ID: PICK_TEAM,
-               ADJUST_ID: ADJUST_AMOUNT}[self.state]
+               ADJUST_ID: ADJUST_AMOUNT}[purpose]
         return self._go(nxt)
 
     # -- a user's own menu
@@ -685,6 +810,8 @@ class KioskController:
                  "5": RENAME_ID, "6": ACTIVE_ID}.get(key)
         if key == "7":
             return self._go(OFF_LIST, {"page": 0})
+        if key == "8":
+            return self._go(NAME_SEARCH, {"for": PERSON})
         return self._go(state, {}) if state else None
 
     def _hours_choice(self, key: str) -> Screen | None:
@@ -706,6 +833,10 @@ class KioskController:
             if self.seasons is None:
                 return self._error_keep_state("Seasons can't be viewed from this kiosk.")
             return self._go(PAST_LIST, {"list_page": 0})
+        if key == "7":
+            if self.schedule is None:
+                return self._error_keep_state("Scheduled sign-out isn't set up on this kiosk.")
+            return self._go(SCHEDULE, {})
         return None
 
     def _system_choice(self, key: str) -> Screen | None:
@@ -853,6 +984,8 @@ class KioskController:
 
     def _text_key(self, key: str) -> Screen:
         """A key while a name or Wi-Fi password is being typed; # submits it."""
+        if self.state in (NAME_SEARCH, BOARD_SEARCH):
+            return self._search_key(key)
         if self.state == WIFI_PASSWORD:
             if key.isdigit():           # a USB keyboard's digits type too
                 return self.handle_char(key)
@@ -886,6 +1019,148 @@ class KioskController:
         screen = self._go(ENROLL_SCAN, {"user": user, "new": True})
         screen.tone, screen.sound = "success", "success"
         return screen
+
+    # -- scheduled sign-out
+
+    def _schedule_key(self, key: str) -> Screen | None:
+        """The list of times: a number opens that time, # adds one."""
+        if key == "#":
+            return self._go(SCHEDULE_TIME, {})
+        times = self.schedule.times()
+        if key.isdigit() and 1 <= int(key) <= len(times):
+            time, keep = times[int(key) - 1]
+            return self._go(SCHEDULE_ITEM, {"time": time, "keep": keep})
+        return None
+
+    def _schedule_time_key(self, key: str) -> Screen:
+        """Adding a time: type it as 4 digits (2100), then OK."""
+        if key.isdigit():
+            if len(self.buffer) < 4:
+                self.buffer += key
+            return self._redraw()
+        if key != "#" or not self.buffer:
+            return self._redraw()
+        try:
+            time = parse_time(self.buffer)
+        except ScheduleError as exc:
+            self.buffer = ""
+            return self._error_keep_state(str(exc))
+        if any(t == time for t, _ in self.schedule.times()):
+            self.buffer = ""
+            return self._error_keep_state(f"{time} is already on the list.")
+        return self._go(SCHEDULE_KEEP, {"time": time})
+
+    def _schedule_keep_key(self, key: str) -> Screen | None:
+        """# keeps their hours up to then, B drops them."""
+        if key not in ("#", "B"):
+            return None
+        time = self.context["time"]
+        try:
+            self.schedule.add(time, keep=key == "#")
+        except ScheduleError as exc:
+            self._go(SCHEDULE, {})
+            return self._error_keep_state(str(exc))
+        return self._go(SCHEDULE, {})
+
+    def _schedule_item_key(self, key: str) -> Screen | None:
+        """One time: # switches keep/drop, B removes it."""
+        time, keep = self.context["time"], self.context["keep"]
+        if key == "#":
+            self.schedule.set_keep(time, not keep)
+        elif key == "B":
+            self.schedule.remove(time)
+        else:
+            return None
+        return self._go(SCHEDULE, {})
+
+    # -- finding people by name
+
+    def _search_users(self, query: str, include_inactive: bool = False) -> list[dict]:
+        """People whose name (or ID) matches, best first: name starts with it, then a
+        word in it does, then it's anywhere in the name."""
+        words = query.lower().split()
+        if not words:
+            return []
+        found = []
+        for user in self.users.list(include_inactive=include_inactive):
+            name = user["username"].lower()
+            if not all(w in name or w == user["code"].lower() for w in words):
+                continue
+            if name.startswith(words[0]) or user["code"].lower() == words[0]:
+                score = 0
+            elif any(part.startswith(words[0]) for part in name.split()):
+                score = 1
+            else:
+                score = 2
+            found.append((score, name, user))
+        return [user for _, _, user in sorted(found, key=lambda f: f[:2])]
+
+    def _search_key(self, key: str) -> Screen:
+        """Name search: a result's number picks it, Done (#) picks the first one."""
+        found = self._search_results()
+        if self.state == BOARD_SEARCH:
+            if key == "#":   # Done: back to the leaderboard, showing only the matches
+                return self._go(BOARD, {"query": self.buffer.strip()})
+            return self._redraw()
+        if key == "#" and found:
+            key = "1"
+        if not key.isdigit() or not 1 <= int(key) <= min(len(found), SEARCH_SHOWN):
+            return self._redraw()
+        user, purpose = found[int(key) - 1], self.context["for"]
+        if purpose == PERSON:
+            return self._open_person(user["id"], query=self.buffer)
+        if not user["is_active"] and purpose != ACTIVE_ID:
+            return self._error_keep_state(f"{user['username']} is deactivated.")
+        self.state, self.buffer = purpose, ""
+        return self._use_user(user, purpose)
+
+    def _search_results(self) -> list[dict]:
+        if self.state == BOARD_SEARCH:
+            return self._search_users(self.buffer)
+        # Deactivated people can be found to switch them back on, or to see their page.
+        return self._search_users(self.buffer, self.context["for"] in (ACTIVE_ID, PERSON))
+
+    def _open_person(self, user_id: int, query: str | None = None) -> Screen:
+        """Someone's page (People > Find someone by name)."""
+        ctx = {"user": self.users.get(user_id)}
+        if query is None:   # coming back from an action: keep the search to go back to
+            query = self.context.get("query", "")
+        ctx["query"] = query
+        return self._go(PERSON, ctx)
+
+    def _person_key(self, key: str) -> Screen | None:
+        """An action on someone's page: straight to its next step, no ID to type."""
+        purpose = {"1": MOVE_ID, "2": RENAME_ID, "3": ENROLL_ID, "4": UNCARD_ID,
+                   "5": ACTIVE_ID, "6": ADJUST_ID, "7": TOGGLE_ID}.get(key)
+        if purpose is None:
+            return None
+        query = self.context.get("query", "")
+        screen = self._use_user(self.context["user"], purpose, from_person=True)
+        if self.state != IDLE:          # (signing in or out finishes straight away)
+            self.context["query"] = query   # for back, through the action, to the search
+        return screen
+
+    # -- the leaderboard
+
+    def _board_key(self, key: str) -> Screen | None:
+        """The leaderboard: ? searches by name, # shows everyone again."""
+        if key == "?":
+            return self._go(BOARD_SEARCH, {})
+        if key == "#" and self.context.get("query"):
+            return self._go(BOARD, {})
+        return None
+
+    def _board_rows(self, entries, users: list[dict] | None = None) -> list[dict]:
+        """Leaderboard entries as rows (only those in ``users``, if given)."""
+        if users is not None:
+            ids_wanted = [u["id"] for u in users]
+            by_id = {e.user_id: e for e in entries}
+            entries = [by_id[i] for i in ids_wanted if i in by_id]
+        return [{"name": e.username, "team": e.section,
+                 "rank": e.rank if e.total_seconds else None,   # no time yet: no rank
+                 "sub": f"{e.code}  ·  {self.users.team_name(e.section, short=True)}",
+                 "right": timefmt.format_duration(e.total_seconds) if e.total_seconds
+                 else "No time yet"} for e in entries]
 
     def _here_list_key(self, key: str) -> Screen | None:
         """# on the "who is here" / "deactivated" lists: next page."""
@@ -1141,8 +1416,8 @@ class KioskController:
         """The Screen for the current state (see _redraw)."""
         state, ctx = self.state, self.context
         if state == ADMIN_MENU:
-            lines = ["1  People: Add people, enroll cards, change teams, rename, deactivate",
-                     f"2  Hours: {self._here_count()}Adjust hours, sign people in or out, seasons",
+            lines = ["1  People: Find people by name, add people, enroll cards, change teams",
+                     f"2  Hours: {self._here_count()}Adjust hours, sign people in or out, scheduled sign-out, seasons",
                      "3  System: Wi-Fi, updates, admin PIN, restart, shut down"]
             if self.updates is not None and self.updates.available:
                 lines.append(f"Update ready: {self.updates.new_commits} new")
@@ -1194,6 +1469,83 @@ class KioskController:
             choices = [f"{key}  {self.users.team_name(letter)}"
                        for key, letter in self.team_choices.items()]
             return Screen("Add a person: team", choices, "prompt")
+        if state == NAME_SEARCH:
+            found = self._search_results()
+            what = {PERSON: "Find someone", ENROLL_ID: "Enroll a card", ADJUST_ID: "Adjust hours",
+                    MOVE_ID: "Change team", UNCARD_ID: "Remove cards", RENAME_ID: "Rename",
+                    ACTIVE_ID: "Deactivate / reactivate",
+                    TOGGLE_ID: "Sign in or out"}[ctx["for"]]
+            rows = [{"key": str(n), "name": u["username"], "team": u["section"],
+                     "sub": f"{u['code']}  ·  {self.users.team_name(u['section'], short=True)}"
+                            + ("" if u["is_active"] else "  ·  deactivated")}
+                    for n, u in enumerate(found[:SEARCH_SHOWN], start=1)]
+            return Screen(f"{what}: search by name", self._search_lines(found), "prompt",
+                          entry=self.buffer + "_", keyboard="name", rows=rows)
+        if state == BOARD_SEARCH:
+            found = self._search_results()
+            rows = self._board_rows(self.attendance.leaderboard(), found[:SEARCH_SHOWN])
+            return Screen("Leaderboard: find a rank", self._search_lines(found), "prompt",
+                          entry=self.buffer + "_", keyboard="name", rows=rows)
+        if state == BOARD:
+            entries = self.attendance.leaderboard()
+            query = ctx.get("query", "")
+            season = self.attendance.active_season_name()
+            if query:
+                found = self._search_users(query)
+                rows = self._board_rows(entries, found)
+                return Screen("Leaderboard", [
+                    f"Season {season}  ·  \u201c{query}\u201d: {len(rows)} found",
+                    "?  Search again      #  Show everyone"], "info", rows=rows)
+            people = f"{len(entries)} {'person' if len(entries) == 1 else 'people'}"
+            return Screen("Leaderboard", [f"Season {season}  ·  {people}",
+                                          "?  Find someone's rank"], "info",
+                          rows=self._board_rows(entries))
+        if state == SCHEDULE:
+            times = self.schedule.times()
+            lines = ["Everyone still signed in is signed out at these times, every day."]
+            lines += [f"{n}  {t}  ·  {'their hours count' if keep else 'hours not counted'}"
+                      for n, (t, keep) in enumerate(times, start=1)]
+            if not times:
+                lines += ["", "No times yet."]
+            lines += ["", "#  Add a time"]
+            return Screen("Scheduled sign-out", lines, "prompt")
+        if state == SCHEDULE_TIME:
+            digits = self.buffer
+            shown = (digits.rjust(4, "_") if len(digits) == 4 else digits.ljust(4, "_"))
+            return Screen("Add a sign-out time", [
+                "Type the time on the 24-hour clock:",
+                "2100 = 9:00 PM,  1530 = 3:30 PM",
+            ], "prompt", entry=f"{shown[:2]}:{shown[2:]}", keyboard="numpad")
+        if state == SCHEDULE_KEEP:
+            return Screen(f"At {ctx['time']}, count their hours?", [
+                "Everyone still signed in is signed out then.",
+                "Count: their time up to then is kept, like signing out.",
+                "Don't count: that visit earns nothing (for people who forget).",
+                "*  Cancel      B  Don't count      #  Count them",
+            ], "prompt")
+        if state == SCHEDULE_ITEM:
+            now = "Their hours up to then count." if ctx["keep"] else "Their hours aren't counted."
+            switch = "Don't count them" if ctx["keep"] else "Count them"
+            return Screen(f"Sign-out at {ctx['time']}", [
+                now, f"*  Cancel      B  Remove      #  {switch}",
+            ], "prompt")
+        if state == PERSON:
+            user = ctx["user"]
+            stats = self.attendance.user_stats(user["id"])
+            cards = sum(1 for t in self.users.list_tags()
+                        if t["user_id"] == user["id"] and t["is_active"])
+            team = self.users.team_name(user["section"])
+            now = "signed in now" if stats.signed_in else "signed out"
+            if not user["is_active"]:
+                now = "deactivated"
+            switch = "5  Deactivate" if user["is_active"] else "5  Reactivate"
+            return Screen(user["username"], [
+                "1  Change team", "2  Rename", "3  Enroll a card",
+                f"4  Remove cards ({cards})", switch, "6  Add / subtract hours",
+                f"7  Sign {'out' if stats.signed_in else 'in'}",
+            ], "prompt", stats=_stats(stats) + [("Cards", str(cards))],
+                person={"name": user["username"], "team": user["section"],
+                        "sub": f"{user['code']}  ·  {team}  ·  {now}"})
         if state in NAME_STATES:
             if state == NEW_NAME:
                 title = f"Add a person  ·  {self.users.team_name(ctx['section'])}"
@@ -1297,8 +1649,10 @@ class KioskController:
             # Show the typed part plus a _ for each character still to come: A0__
             length = ids.code_length(self.buffer) if self.buffer else ids.DIGITS + 1
             shown = self.buffer + "_" * (length - len(self.buffer))
-            return Screen(title, ["Tap the team, then type the number."], "prompt",
-                          entry=shown, keyboard="id")
+            lines = ["Tap the team, then type the number."]
+            if state != USER_ID:   # admins can also find people (and imported ones) by name
+                lines.append("?  Search by name")
+            return Screen(title, lines, "prompt", entry=shown, keyboard="id")
         if state in PIN_STATES:
             return self._pin_screen()
         if state == ADJUST_AMOUNT:
@@ -1384,6 +1738,16 @@ class KioskController:
         return Screen(title, [*lines, "", f"*  Cancel      #  {CONFIRM_VERBS[action]}"],
                       "warning")
 
+    def _search_lines(self, found: list) -> list[str]:
+        """The line under a name search: a hint, or how many more matched."""
+        if not self.buffer.strip():
+            return ["Type part of a name (or an ID)."]
+        if not found:
+            return ["Nobody by that name."]
+        if len(found) > SEARCH_SHOWN:
+            return [f"{len(found) - SEARCH_SHOWN} more: keep typing to narrow it down."]
+        return [""]
+
     def _error_keep_state(self, message: str, screen: Screen | None = None) -> Screen:
         """Stay on this screen, with the error on top in red."""
         screen = screen or self._redraw()
@@ -1418,7 +1782,9 @@ def _season_dates(season: dict) -> str:
 
 def _rank_text(stats: UserStats) -> str:
     """"#3 of 40", or "-" with no time yet."""
-    return f"#{stats.rank} of {stats.ranked_users}" if stats.rank else "-"
+    if not stats.rank or not stats.total_seconds:   # no time yet: not ranked
+        return "-"
+    return f"#{stats.rank} of {stats.ranked_users}"
 
 
 def local_ip() -> str:

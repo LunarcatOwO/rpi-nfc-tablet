@@ -214,7 +214,7 @@ def test_scan_shows_the_team_name(services):
     users.enroll_tag("04AA", users.add("taylor", "B")["id"])
     screen = tap(controller, reader, "04AA")
     assert "B001  ·  Impact" in screen.lines[0] and screen.view == "result"
-    assert screen.stats[1] == ("Leaderboard", "#1 of 1")
+    assert screen.stats[1] == ("Leaderboard", "-")   # no time yet: not ranked
 
 
 def test_admin_changes_someones_team(services):
@@ -297,3 +297,20 @@ def test_back_arrow_and_team_buttons(services):
     assert controller.handle_nav("bogus") is None
     press(controller, "1")                                     # into a task: no side list
     assert controller.handle_nav("system") is None
+
+
+def test_more_teams_than_the_old_keypad_letters(services, db):
+    """Teams aren't tied to the keypad's A-D any more: a fifth one gets its own button."""
+    import copy
+
+    from nfc_login.config import DEFAULTS, _check_sections
+    from nfc_login.services.users import UserService
+    attendance, _seasons, _users = services
+    sections = copy.deepcopy(DEFAULTS["sections"])
+    sections.insert(4, {"letter": "E", "name": "Electrical"})   # no "key": it sends its letter
+    _check_sections(sections)
+    users = UserService(db, sections)
+    users.add("ellis", "E")
+    controller = kc.KioskController(attendance, users)
+    assert controller.section_keys["E"] == "E"
+    assert press(controller, "#E001").title == "Sign in ellis?"

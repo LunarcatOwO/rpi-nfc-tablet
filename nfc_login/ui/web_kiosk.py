@@ -40,7 +40,7 @@ from nfc_login.services import timefmt
 log = logging.getLogger(__name__)
 
 PAGE = Path(__file__).with_name("kiosk.html")
-KEYS = set("0123456789ABCD*#X")  # every key a button can send
+KEYS = set("0123456789*#?~ABCDEFGHIJKLMNOPQRSTUVWXYZ")  # every key a button can send (X = back)
 RESTART_DELAY_SECONDS = 2.5      # time to read "Restarting..." first
 
 
@@ -86,6 +86,11 @@ class WebKiosk:
     def publish(self, screen: Screen, sound: bool = True) -> None:
         """Show a screen on every page. Safe to call from any thread."""
         # sound=False: the page shows it quietly (going back to the start screen).
+        if screen.toast:   # a pop-up: the screen underneath stays as it is
+            self._send({"type": "toast", "toast": screen_json(screen, sound)})
+            if screen.refresh_leaderboard:
+                self._send({"type": "refresh"})
+            return
         with self._lock:
             self._screen = screen
             # Results go back to the idle screen after hold_seconds (see _tick).
@@ -160,9 +165,15 @@ class WebKiosk:
     def _tick(self) -> None:
         # Once a second: drop half-typed input, and go back to the idle screen
         # once a result has been shown long enough.
+        ticks = 0
         while True:
             time.sleep(1)
+            ticks += 1
             try:
+                # Every 5 s: clock jumps and scheduled sign-out (shown as a pop-up).
+                job = self.controller.background_checks() if ticks % 5 == 0 else None
+                if job:
+                    self.publish(job)
                 screen = self.controller.check_timeout()
                 if screen:
                     self.publish(screen)
@@ -232,7 +243,7 @@ def screen_json(screen: Screen, sound: bool = True) -> dict:
             "entry": screen.entry, "keyboard": keyboard_mode(screen),
             "busy": screen.busy, "hold": screen.hold_seconds,
             "view": screen.view, "nav": screen.nav, "person": screen.person,
-            "stats": [list(s) for s in screen.stats],
+            "stats": [list(s) for s in screen.stats], "rows": screen.rows,
             "sound": screen.chime if sound else None}
 
 

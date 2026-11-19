@@ -24,7 +24,7 @@ import pytest
 from nfc_login.hardware.simulated import SimulatedReader
 from nfc_login.kiosk import controller as kc
 from nfc_login.kiosk.nfc_worker import NfcWorker
-from nfc_login.ui.web_kiosk import WebKiosk, serve
+from nfc_login.ui.web_kiosk import KEYS, WebKiosk, serve
 
 
 @pytest.fixture
@@ -79,7 +79,7 @@ def test_other_web_pages_cant_press_keys(kiosk):
             post(base + "/key", "key=1", headers)
         assert err.value.code == 403
     with pytest.raises(urllib.error.HTTPError) as err:
-        post(base + "/key", "key=Z")
+        post(base + "/key", "key=?!")
     assert err.value.code == 400
 
 
@@ -171,3 +171,16 @@ def test_screens_say_when_to_spin_and_how_long_they_stay():
     held = kc.Screen("Welcome, Rowan!", hold_seconds=6)
     assert screen_json(busy)["busy"] and screen_json(busy)["hold"] is None
     assert not screen_json(held)["busy"] and screen_json(held)["hold"] == 6
+
+
+def test_popups_leave_the_screen_alone(kiosk):
+    kiosk, _users, _base = kiosk
+    q = kiosk.listen()
+    before = kiosk.current()
+    kiosk.publish(kc.Screen("Alex Chen signed in", ["A001"], "success", toast=True,
+                            refresh_leaderboard=True))
+    event = q.get(timeout=3)
+    assert event["type"] == "toast" and event["toast"]["title"] == "Alex Chen signed in"
+    assert q.get(timeout=3)["type"] == "refresh"
+    assert kiosk.current() == before                        # still the same screen
+    assert {"~", "?"} <= KEYS                               # Leaderboard and Search buttons

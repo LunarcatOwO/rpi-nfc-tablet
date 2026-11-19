@@ -25,6 +25,8 @@ from nfc_login.config import load_config
 from nfc_login.hardware import create_reader
 from nfc_login.kiosk.controller import KioskController
 from nfc_login.kiosk.nfc_worker import NfcWorker
+from nfc_login.services.clockguard import ClockGuard
+from nfc_login.services.schedule import AutoSignOut
 from nfc_login.services.system import SystemActions
 from nfc_login.services.updates import UpdateChecker
 from nfc_login.web.server import start_in_background
@@ -74,6 +76,8 @@ def main() -> None:
         system=SystemActions(),
         updates=updates,
         reopen_hint="To start it again, restart the Pi, or open NFC Kiosk from the desktop menu.",
+        schedule=AutoSignOut(services.db, config.attendance["max_session_hours"]),
+        clock_guard=ClockGuard(services.db),
     )
 
     # Live "who's here" page on port 8080, in its own thread.

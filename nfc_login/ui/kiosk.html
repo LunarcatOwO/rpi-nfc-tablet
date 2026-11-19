@@ -88,6 +88,12 @@ p { margin: 0; }
 .hero h1 { margin: 0; font-size: 44px; font-weight: 700; letter-spacing: -.01em; }
 .hero p { font-size: 19px; color: var(--muted); max-width: 520px; line-height: 1.4; }
 .hero .acts { margin-top: 8px; }
+.bigclock { text-align: center; line-height: 1; }
+.bigclock b { display: block; font-size: 72px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.bigclock span { display: block; font-size: 18px; color: var(--muted); margin-top: 8px; }
+.hero.idle { gap: 18px; }
+.hero.idle .ring { width: 130px; height: 130px; box-shadow: 0 0 0 12px color-mix(in srgb, var(--accent) 5%, transparent); animation: none; }
+.hero.idle h1 { font-size: 34px; }
 
 /* result: welcome / goodbye / done / errors */
 .result h1 { color: var(--accent); font-size: 46px; }
@@ -159,7 +165,7 @@ p { margin: 0; }
 .tbtns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .tbtn { height: 64px; border-radius: 16px; border: 2px solid transparent; background: var(--raised);
   font: 600 18px var(--sans); display: flex; align-items: center; gap: 12px; padding: 0 14px; text-align: left; }
-.tbtn .tl { width: 34px; height: 34px; font-size: 16px; border-radius: 10px; }
+.tbtn .tl { width: 18px; height: 18px; border-radius: 50%; }
 .tbtn.on { border-color: var(--tc); background: color-mix(in srgb, var(--tc) 12%, transparent); }
 .hint { font-size: 15px; color: var(--muted); display: flex; align-items: center; gap: 10px; }
 #pad { display: none; width: 360px; flex: none; margin: 20px 20px 20px 0; gap: 10px;
@@ -212,6 +218,38 @@ body.idle #side { display: flex; }
 .tm { font-size: 16px; color: var(--soft); font-variant-numeric: tabular-nums; }
 .empty { color: var(--muted); padding: 24px 16px; font-size: 16px; text-align: center; }
 
+/* people as rows: the leaderboard screen and name searches */
+.prow { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-radius: 16px; background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line); border: 0; text-align: left; font: inherit; color: inherit; min-height: 62px; }
+button.prow { transition: transform .08s, background-color .12s; }
+button.prow:active { transform: scale(.98); background: var(--raised); }
+.prow .av { width: 40px; height: 40px; font-size: 17px; }
+.prow .rank { width: 40px; font-size: 20px; font-weight: 700; }
+.prow .rank.r1 { color: #f2c94c; } .prow .rank.r2 { color: #c9d2dc; } .prow .rank.r3 { color: #e0975a; }
+.prow .nm { font-size: 19px; }
+.prow .nm div { font-size: 14px; }
+.prows { display: grid; gap: 8px; grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr)); }
+.prows.compact .prow { min-height: 54px; padding: 6px 14px; }
+.boardtop { display: flex; align-items: center; gap: 14px; }
+.boardtop .text { flex: 1; color: var(--muted); }
+.boardtop .btn { height: 52px; padding: 0 20px; font-size: 18px; }
+.field.empty { color: var(--dim); font-weight: 500; }
+.sidemore { display: none; margin: 8px; height: 48px; border: 0; border-radius: 12px; background: var(--key);
+  font: 600 16px var(--sans); align-items: center; justify-content: center; gap: 8px; }
+.tabs.board ~ .sidemore { display: flex; }
+
+/* a card tapped mid-menu: a pop-up in the corner, the menu stays */
+#toasts { position: fixed; top: 76px; right: 14px; z-index: 8; display: flex; flex-direction: column; gap: 10px;
+  width: 400px; pointer-events: none; }
+.toast { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 18px; background: #1f2630;
+  box-shadow: 0 12px 40px rgba(0,0,0,.5), inset 0 0 0 1px #2e3744, inset 4px 0 0 var(--tc, var(--info));
+  animation: slidein .3s var(--ease); transition: opacity .4s, transform .4s; pointer-events: auto; }
+.toast.out { opacity: 0; transform: translateX(30px); }
+@keyframes slidein { from { opacity: 0; transform: translateX(40px); } }
+.toast .av, .toast .ti { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; flex: none; }
+.toast b { display: block; font-size: 18px; }
+.toast div span { font-size: 15px; color: var(--muted); }
+
 /* "are you sure?" and "is this you?": a box over the screen underneath */
 #veil { position: absolute; inset: 0; z-index: 5; background: rgba(5,8,12,.72); display: none; place-items: center; }
 body.boxed #veil { display: grid; animation: fade .2s; }
@@ -220,7 +258,7 @@ body.boxed #veil { display: grid; animation: fade .2s; }
   animation: pop .25s var(--ease); }
 .dialog h2 { margin: 0; font-size: 28px; }
 .dialog .acts { margin-top: 6px; flex-wrap: nowrap; }
-.dialog .btn { flex: 1; height: 68px; }
+.dialog .btn { flex: 1; height: 68px; padding: 0 16px; white-space: nowrap; }
 .dialog .btn.primary { flex: 2; }
 .dialog .text { font-size: 18px; }
 .person { display: flex; align-items: center; gap: 20px; }
@@ -283,11 +321,13 @@ body.boxed #veil { display: grid; animation: fade .2s; }
     <div class="tabs" id="tabs"><span class="ink"></span>
       <button id="tab-here" class="on">Here now</button><button id="tab-board">Leaderboard</button></div>
     <div id="list"></div>
+    <button class="sidemore press" id="sidemore">See everyone · find a rank</button>
   </aside>
   <div id="veil"></div>
 </main>
 <div id="kbd"></div>
 <div id="hold"><i></i></div>
+<div id="toasts"></div>
 <div id="sim">SIMULATOR card UID: <input id="uid" value="04A1B2C3D4E5F6"><button id="tap">Tap card</button></div>
 <div id="offline"><span class="spinner" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>Kiosk service not responding, reconnecting…</div>
 
@@ -330,6 +370,9 @@ const ICONS = {
   people: '<circle cx="18" cy="16" r="7"/><path d="M5 40a13 13 0 0 1 26 0M32 9a7 7 0 0 1 0 14M36 29a13 13 0 0 1 7 11"/>',
   clock: '<circle cx="24" cy="24" r="18"/><path d="M24 14v10l6 4"/>',
   screen: '<rect x="6" y="8" width="36" height="24" rx="4"/><path d="M16 40h16M24 32v8"/>',
+  trophy: '<path d="M15 8h18v10a9 9 0 0 1-18 0zM15 12H8a6 6 0 0 0 7 8M33 12h7a6 6 0 0 1-7 8M24 27v7M16 41h16l-2-7H18z"/>',
+  search: '<circle cx="21" cy="21" r="12"/><path d="M30 30l11 11"/>',
+  timer: '<circle cx="24" cy="27" r="16"/><path d="M24 18v9l5 4M19 5h10"/>',
 };
 function icon(name, size, color, width = 2.4) {
   const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -403,7 +446,7 @@ function tapSound() { if (side && side.sounds && side.tap_sounds) tone([[1400, .
 function keyParts(line) {
   const parts = [];
   for (const chunk of line.trim().split(/ {3,}/)) {
-    const m = /^([0-9A-D*#X])  (\S.*)$/.exec(chunk);
+    const m = /^([0-9A-Z*#?~])  (\S.*)$/.exec(chunk);
     if (!m) return null;
     parts.push([m[1], m[2].trimEnd()]);
   }
@@ -434,9 +477,13 @@ function actButtons(parts, opts = {}) {
   return h("div.acts", {}, parts.map(([k, label]) => {
     const primary = !opts.plain && (k === "#" || k === "A");
     const b = h(`button.btn.press${primary ? ".primary" : ""}${opts.wide ? ".wide" : ""}`,
-                { on: () => sendKey(keyFor(k)) }, opts.icon && k === "#" ? icon(opts.icon, 24) : null, label);
+                { on: () => sendKey(keyFor(k)) }, keyIcon(k, opts), label);
     return b;
   }));
+}
+function keyIcon(k, opts) {
+  const name = k === "#" ? opts.icon : { "~": "trophy", "?": "search" }[k];
+  return name ? icon(name, 24) : null;
 }
 function itemList(items, cols) {
   return h("div.items", { style: `--cols: ${cols}` }, items.map(([k, label]) =>
@@ -521,14 +568,52 @@ function drawView(s) {
     case "admin": return drawAdmin(s);
     case "teams": return drawTeams(s);
     case "menu": return h("div.page.scroll", {}, drawBlocks(s.lines, { error: s.tone === "error" }));
+    case "board": return drawBoard(s);
   }
+  if (s.person) return drawPerson(s);
   return h("div.page.scroll", {}, drawBlocks(s.lines, { error: s.tone === "error", mono: true }));
 }
 
+// People as rows: a rank or avatar, the name, their ID and team, and time.
+function personRows(rows, opts = {}) {
+  return h(`div.prows${opts.compact ? ".compact" : ""}`, { style: `--cols: ${opts.cols || 1}` }, rows.map(r => {
+    const kids = [
+      "rank" in r ? h(`span.rank${r.rank && r.rank <= 3 ? ".r" + r.rank : ""}`, {}, r.rank ? String(r.rank) : "–") : null,
+      h("span.av", { style: `background: ${teamColor(r.team)}` }, (r.name || "?")[0]),
+      h("div.nm", {}, r.name, h("div", {}, r.sub)),
+      r.right ? h("span.tm", {}, r.right) : null,
+      r.key ? icon("chev", 20, "#6b7684") : null];
+    return r.key ? h("button.prow", { on: () => sendKey(r.key) }, kids) : h("div.prow", {}, kids);
+  }));
+}
+// The whole leaderboard (or the people a search found), with Search on top.
+function drawBoard(s) {
+  const bl = blocks(s.lines);
+  const texts = bl.filter(b => b.text !== undefined).map(b => b.text);
+  const acts = bl.filter(b => b.acts).flatMap(b => b.acts);
+  return h("div.page", { style: "padding-bottom: 0" },
+    h("div.boardtop", {}, h("p.text", {}, texts[0] || ""),
+      acts.map(([k, label]) => h(`button.btn.press${k === "?" ? ".primary" : ""}`, { on: () => sendKey(keyFor(k)), style: "--go: var(--info)" },
+                                 keyIcon(k, {}), label))),
+    h("div.scroll", { style: "flex: 1; min-height: 0; padding-bottom: 20px" },
+      s.rows.length ? personRows(s.rows) : h("div.empty", {}, "Nobody by that name")));
+}
+// Someone's page (admin): who they are, their hours, and what can be changed.
+function drawPerson(s) {
+  const p = s.person, bl = blocks(s.lines);
+  const err = s.tone === "error" && bl[0] && bl[0].text !== undefined;
+  return h("div.page.scroll", {},
+    err ? textP(bl[0].text, ".err") : null,
+    h("div.person", {}, h("span.av", { style: `background: ${teamColor(p.team)}` }, p.name[0] || "?"),
+      h("div", { style: "flex: 1; min-width: 0" }, h("b", {}, p.name), h("span", {}, p.sub)),
+      statCards(s.stats)),
+    bl.filter(b => b.items).map(b => itemList(b.items, 2)));
+}
 function drawIdle(s) {
   const bl = blocks(s.lines);
-  return h("div.hero", {},
-    h("div.ring", {}, icon("card", 96, "var(--accent)")),
+  return h("div.hero.idle", {},
+    h("div.bigclock", {}, h("b", { "data-clock": "time" }, clockText()), h("span", { "data-clock": "date" }, dateText())),
+    h("div.ring", {}, icon("card", 70, "var(--accent)")),
     h("h1", {}, s.title),
     bl.map(b => b.text !== undefined ? textP(b.text)
       : actButtons(b.acts, { icon: "pad", plain: true })));
@@ -568,7 +653,7 @@ function drawTeams(s) {
       cards.map(([k, label]) => {
         const team = teamByName(label), [name, note] = label.split(/ {2}\(|\)$/);
         return h("button.team", { on: () => sendKey(k) },
-          h("span.tl", { style: `background: ${teamColor(team ? team.letter : "")}` }, team && team.key ? team.key : "#"),
+          h("span.tl", { style: `background: ${teamColor(team ? team.letter : "")}` }),
           h("span", {}, name, note ? h("small", {}, note[0].toUpperCase() + note.slice(1)) : null));
       }),
       extra.map(([k, label]) => h("button.team.ghost", { on: () => sendKey(keyFor(k)) }, label))));
@@ -588,9 +673,9 @@ function drawId(s) {
     h("div.hint", {}, "Tap your team, then type your number"),
     h("div.tbtns", {}, keys.map(t => h(`button.tbtn${t.letter === letter ? ".on" : ""}`,
       { style: `--tc: ${teamColor(t.letter)}`, on: () => sendKey(t.key) },
-      h("span.tl", { style: `background: ${teamColor(t.letter)}` }, t.key), t.name))),
-    side && side.mentors ? h("div.hint", { style: "margin-top: auto" },
-      h("span.tl", { style: `background: ${teamColor("M")}; width: 28px; height: 28px; font-size: 13px` }, "#"),
+      h("span.tl", { style: `background: ${teamColor(t.letter)}` }), t.name))),
+    bl.filter(b => b.acts).map(b => h("div", { style: "margin-top: auto" }, actButtons(b.acts, { plain: true }))),
+    side && side.mentors && !bl.some(b => b.acts) ? h("div.hint", { style: "margin-top: auto" },
       "Mentors and captains: just type your number.") : null);
 }
 // PINs (dots) and hour amounts (text), with the number pad beside.
@@ -616,10 +701,19 @@ function drawTyping(s) {
   const bl = blocks(s.lines);
   const err = s.tone === "error" && bl[0] && bl[0].text !== undefined;
   const label = bl.filter(b => b.text !== undefined).map(b => b.text);
+  const typed = (s.entry || "").replace(/_$/, "");
+  const search = s.rows && (s.rows.length || /search|rank/i.test(s.title));
+  if (search) {   // a name search: the field, then what it found, above the keyboard
+    return h("div.page", { style: "justify-content: flex-start; gap: 10px; padding-top: 14px" },
+      err ? textP(label.shift(), ".err") : null,
+      h(`div.field${typed ? "" : ".empty"}`, {}, typed || "Type a name…"),
+      s.rows.length ? personRows(s.rows, { cols: 2, compact: true }) : null,
+      label.filter(t => t.trim()).map(t => h("p.text", { style: "font-size: 15px; color: var(--muted)" }, t)));
+  }
   return h("div.page", { style: "justify-content: flex-start" },
     err ? textP(label.shift(), ".err") : null,
     label.map(t => h("p.text", { style: "font-size: 15px; color: var(--muted)" }, t)),
-    h("div.field", {}, (s.entry || "").replace(/_$/, "")));
+    h("div.field", {}, typed));
 }
 function drawDialog(s) {
   const p = s.person;
@@ -637,6 +731,23 @@ function drawDialog(s) {
     statCards(s.stats),
     h("div.acts", {}, acts.map(([k, label]) => h(`button.btn.press${k === "#" ? ".primary" : ""}`,
       { on: () => sendKey(keyFor(k)) }, label))));
+}
+
+// A card tapped mid-menu (or a scheduled sign-out): a pop-up for 4 s, the menu stays.
+function showToast(t) {
+  playSound(t.sound);
+  const color = t.tone === "error" ? "var(--error)" : t.tone === "warning" ? "var(--warning)"
+    : t.person ? teamColor(t.person.team) : "var(--info)";
+  const mark = t.person ? h("span.av", { style: `background: ${color}` }, t.person.name[0] || "?")
+    : h("span.ti", { style: `background: color-mix(in srgb, ${color} 18%, transparent)` },
+        icon(t.tone === "info" ? "timer" : "warn", 24, color, 2.6));
+  const el = h("div.toast", { style: `--tc: ${color}` }, mark,
+    h("div", { style: "min-width: 0" }, h("b", {}, t.title), t.lines.filter(l => l.trim()).map(l => h("span", { style: "display: block" }, l))));
+  el.onclick = () => el.remove();
+  const box = $("toasts");
+  box.prepend(el);
+  while (box.children.length > 3) box.lastElementChild.remove();
+  setTimeout(() => { el.classList.add("out"); setTimeout(() => el.remove(), 400); }, 4000);
 }
 
 // A result runs a bar down until the start screen comes back. undefined: carry on.
@@ -785,10 +896,11 @@ $("lock").onclick = () => sendKey("X");
 $("gear").onclick = () => sendKey("*");
 $("tab-here").onclick = () => selectTab("here");
 $("tab-board").onclick = () => selectTab("board");
+$("sidemore").onclick = () => sendKey("~");
 document.querySelectorAll("#rail button").forEach(b => { b.onclick = () => sendNav(b.dataset.nav); });
 $("tap").onclick = () => post("/tap", { uid: $("uid").value });
 
-// A computer (or USB) keyboard works too: digits, A-D, Enter, Backspace, Esc = back.
+// A computer (or USB) keyboard works too: digits, team keys, Enter, Backspace, Esc = back.
 document.addEventListener("keydown", e => {
   if (e.target === $("uid")) { if (e.key === "Enter") $("tap").click(); return; }
   if (document.body.classList.contains("typing") && e.key !== "Escape") {
@@ -797,7 +909,7 @@ document.addEventListener("keydown", e => {
     return;
   }
   const key = { Enter: "#", Backspace: "*", Escape: "X" }[e.key] || e.key.toUpperCase();
-  if (key.length === 1 && "0123456789ABCD*#X".includes(key)) { e.preventDefault(); sendKey(key); }
+  if (/^[0-9A-Z*#?~]$/.test(key)) { e.preventDefault(); sendKey(key); }
 });
 document.addEventListener("contextmenu", e => e.preventDefault());   // no long-press menu
 
@@ -807,11 +919,19 @@ function connect() {
   events.onmessage = e => {
     const msg = JSON.parse(e.data);
     if (msg.type === "screen") showScreen(msg.screen);
+    if (msg.type === "toast") showToast(msg.toast);
     if (msg.type === "refresh") loadSide();
   };
   events.onerror = () => $("offline").classList.add("on");   // EventSource retries by itself
 }
-function tick() { $("clock").textContent = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }); }
+// The clock: in the top bar on every screen, and big on the start screen.
+const clockText = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+const dateText = () => new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+function tick() {
+  $("clock").textContent = clockText();
+  document.querySelectorAll("[data-clock=time]").forEach(e => { e.textContent = clockText(); });
+  document.querySelectorAll("[data-clock=date]").forEach(e => { e.textContent = dateText(); });
+}
 tick();
 setInterval(tick, 1000);
 setInterval(loadSide, 5000);

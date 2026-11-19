@@ -10,6 +10,8 @@ no keypad and no buzzer.
 
 ![After a scan](docs/images/tablet-signed-in.png)
 
+![Leaderboard](docs/images/tablet-leaderboard.png)
+
 How each part works is explained in comments in the code itself, starting from
 `nfc_login/__init__.py`.
 
@@ -34,6 +36,18 @@ HDMI output from the speaker icon on the Pi's desktop, and turn them off with
 If the picture doesn't fill the screen, add `video=HDMI-A-1:1024x600@60` to the
 end of the line in `/boot/firmware/cmdline.txt` and reboot.
 
+A card tapped while someone is in admin or on the leaderboard screen still signs
+in or out: a small pop-up says so and the screen stays where it was.
+
+### The clock
+
+The Pi has no clock battery, so after being off it starts at the time it was
+shut down and gets the real time once it's online. The kiosk keeps working
+offline either way. When the clock jumps (getting the real time, daylight
+saving, a new time zone), every session recorded since the kiosk started moves
+by the same amount, so nobody gains or loses hours. A slow or hot Pi doesn't
+change the time either: it comes from a hardware timer, not from counting CPU work.
+
 ## Install on the Pi
 
 On Raspberry Pi OS (64-bit, desktop):
@@ -56,11 +70,18 @@ restart the app.
   (mentors and captains type just the number). Check it's you, then tap **Sign in**.
 - **Back:** the arrow at the top left, or swipe in from the left edge of the screen.
 - **Here now / Leaderboard:** tap the tabs, or swipe the list sideways.
+- **Leaderboard screen:** tap **Leaderboard** on the start screen for everyone's
+  rank, then **Find someone's rank** to search by name.
 - **Admin:** the gear at the top right, then the admin PIN.
 
 Admin has three parts. **People**: add, enroll cards, remove cards, change team,
-rename, deactivate, list deactivated. **Hours**: add/subtract, sign someone in or
-out, who's here, sign everyone out, new season, past seasons. **System**: info,
+rename, deactivate, list deactivated, and find someone by name (their page has
+everything you can change about them, including people brought over from the
+old system who have no team yet). Every "user ID" screen also has **Search by
+name**. **Hours**: add/subtract, sign someone in or out, who's here, sign
+everyone out, new season, past seasons, and scheduled sign-out (times each day
+when everyone still signed in is signed out, each either counting their hours up
+to then or not). **System**: info,
 updates, Wi-Fi, admin PIN, restart/close/minimize the app, restart/shut down the
 Pi. The side list jumps between them. Only admins can enroll cards, and anything
 that can't be undone asks "are you sure?" first.
