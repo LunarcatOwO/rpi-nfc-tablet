@@ -268,21 +268,53 @@ body.boxed #veil { display: grid; animation: fade .2s; }
 .warnic { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center;
   background: color-mix(in srgb, var(--accent) 15%, transparent); }
 
-/* spinner while the kiosk waits (Wi-Fi, updates): dots chasing round a circle */
-.spinner { --size: 30px; --dot: 4px; position: relative; width: var(--size); height: var(--size); flex: none; color: var(--accent); }
-.spinner i { position: absolute; inset: 0; opacity: 0; animation: orbit 5.5s infinite; }
-.spinner i::after { content: ""; position: absolute; left: 50%; top: 0; width: var(--dot); height: var(--dot);
-  margin-left: calc(var(--dot) / -2); border-radius: 50%; background: currentColor; }
-.spinner i:nth-child(2) { animation-delay: .24s; } .spinner i:nth-child(3) { animation-delay: .48s; }
-.spinner i:nth-child(4) { animation-delay: .72s; } .spinner i:nth-child(5) { animation-delay: .96s; }
-@keyframes orbit {
-  0% { transform: rotate(225deg); opacity: 1; animation-timing-function: ease-out; }
-  7% { transform: rotate(345deg); animation-timing-function: linear; }
-  30% { transform: rotate(455deg); animation-timing-function: ease-in-out; }
-  39% { transform: rotate(690deg); animation-timing-function: linear; }
-  70% { transform: rotate(815deg); opacity: 1; animation-timing-function: ease-out; }
-  75% { transform: rotate(945deg); animation-timing-function: ease-out; }
-  76%, 100% { transform: rotate(945deg); opacity: 0; }
+/* spinner while the kiosk waits (Wi-Fi, updates): four dots in a square that fold into a diagonal line and spring back,
+   one diagonal then the other. --size sets the whole thing. */
+.spinner { --size: 40px; --u: calc(var(--size) * .2); position: relative;
+  width: var(--size); height: var(--size); flex: none; color: var(--accent); }
+.spinner i { position: absolute; left: 50%; top: 50%; width: calc(var(--size) * .19);
+  height: calc(var(--size) * .19); margin: calc(var(--size) * -.095); border-radius: 50%;
+  background: currentColor; animation: 1.3s infinite; }
+/* resting square, for when animations are off */
+.spinner i:nth-child(1) { transform: translate(calc(var(--u) * -1), calc(var(--u) * -1)); animation-name: fold-1; }
+.spinner i:nth-child(2) { transform: translate(var(--u), calc(var(--u) * -1)); animation-name: fold-2; }
+.spinner i:nth-child(3) { transform: translate(calc(var(--u) * -1), var(--u)); animation-name: fold-3; }
+.spinner i:nth-child(4) { transform: translate(var(--u), var(--u)); animation-name: fold-4; }
+@keyframes fold-1 {   /* top left dot */
+  0%, 3% { transform: translate(calc(var(--u) * 0.5), calc(var(--u) * -0.5)); animation-timing-function: cubic-bezier(.2, .9, .3, 1); }
+  9% { transform: translate(calc(var(--u) * 0.4), calc(var(--u) * -1)); animation-timing-function: cubic-bezier(.3, .6, .3, 1); }
+  30%, 42% { transform: translate(calc(var(--u) * -1), calc(var(--u) * -1)); animation-timing-function: cubic-bezier(.6, 0, .9, .5); }
+  50%, 53% { transform: translate(calc(var(--u) * -1.5), calc(var(--u) * -1.5)); animation-timing-function: cubic-bezier(.2, .9, .3, 1); }
+  59% { transform: translate(calc(var(--u) * -1.1), calc(var(--u) * -1)); animation-timing-function: cubic-bezier(.3, .6, .3, 1); }
+  80%, 92% { transform: translate(calc(var(--u) * -1), calc(var(--u) * -1)); animation-timing-function: cubic-bezier(.6, 0, .9, .5); }
+  100% { transform: translate(calc(var(--u) * 0.5), calc(var(--u) * -0.5)); }
+}
+@keyframes fold-2 {   /* top right dot */
+  0%, 3% { transform: translate(calc(var(--u) * 1.5), calc(var(--u) * -1.5)); animation-timing-function: cubic-bezier(.2, .9, .3, 1); }
+  9% { transform: translate(calc(var(--u) * 1.1), calc(var(--u) * -1)); animation-timing-function: cubic-bezier(.3, .6, .3, 1); }
+  30%, 42% { transform: translate(calc(var(--u) * 1), calc(var(--u) * -1)); animation-timing-function: cubic-bezier(.6, 0, .9, .5); }
+  50%, 53% { transform: translate(calc(var(--u) * 0.5), calc(var(--u) * 0.5)); animation-timing-function: cubic-bezier(.2, .9, .3, 1); }
+  59% { transform: translate(calc(var(--u) * -0.4), calc(var(--u) * -1)); animation-timing-function: cubic-bezier(.3, .6, .3, 1); }
+  80%, 92% { transform: translate(calc(var(--u) * 1), calc(var(--u) * -1)); animation-timing-function: cubic-bezier(.6, 0, .9, .5); }
+  100% { transform: translate(calc(var(--u) * 1.5), calc(var(--u) * -1.5)); }
+}
+@keyframes fold-3 {   /* bottom left dot */
+  0%, 3% { transform: translate(calc(var(--u) * -1.5), calc(var(--u) * 1.5)); animation-timing-function: cubic-bezier(.2, .9, .3, 1); }
+  9% { transform: translate(calc(var(--u) * -1.1), calc(var(--u) * 1)); animation-timing-function: cubic-bezier(.3, .6, .3, 1); }
+  30%, 42% { transform: translate(calc(var(--u) * -1), calc(var(--u) * 1)); animation-timing-function: cubic-bezier(.6, 0, .9, .5); }
+  50%, 53% { transform: translate(calc(var(--u) * -0.5), calc(var(--u) * -0.5)); animation-timing-function: cubic-bezier(.2, .9, .3, 1); }
+  59% { transform: translate(calc(var(--u) * 0.4), calc(var(--u) * 1)); animation-timing-function: cubic-bezier(.3, .6, .3, 1); }
+  80%, 92% { transform: translate(calc(var(--u) * -1), calc(var(--u) * 1)); animation-timing-function: cubic-bezier(.6, 0, .9, .5); }
+  100% { transform: translate(calc(var(--u) * -1.5), calc(var(--u) * 1.5)); }
+}
+@keyframes fold-4 {   /* bottom right dot */
+  0%, 3% { transform: translate(calc(var(--u) * -0.5), calc(var(--u) * 0.5)); animation-timing-function: cubic-bezier(.2, .9, .3, 1); }
+  9% { transform: translate(calc(var(--u) * -0.4), calc(var(--u) * 1)); animation-timing-function: cubic-bezier(.3, .6, .3, 1); }
+  30%, 42% { transform: translate(calc(var(--u) * 1), calc(var(--u) * 1)); animation-timing-function: cubic-bezier(.6, 0, .9, .5); }
+  50%, 53% { transform: translate(calc(var(--u) * 1.5), calc(var(--u) * 1.5)); animation-timing-function: cubic-bezier(.2, .9, .3, 1); }
+  59% { transform: translate(calc(var(--u) * 1.1), calc(var(--u) * 1)); animation-timing-function: cubic-bezier(.3, .6, .3, 1); }
+  80%, 92% { transform: translate(calc(var(--u) * 1), calc(var(--u) * 1)); animation-timing-function: cubic-bezier(.6, 0, .9, .5); }
+  100% { transform: translate(calc(var(--u) * -0.5), calc(var(--u) * 0.5)); }
 }
 /* a result's time left before the start screen comes back */
 #hold { position: fixed; left: 0; right: 0; bottom: 0; height: 6px; background: var(--raised); opacity: 0; transition: opacity .3s; z-index: 6; }
@@ -295,7 +327,7 @@ body.boxed #veil { display: grid; animation: fade .2s; }
 #offline { position: fixed; right: 12px; bottom: 14px; z-index: 9; padding: 8px 14px 8px 10px; border-radius: 12px;
   background: #3a1d22; box-shadow: 0 0 0 1px var(--error); color: #ffd5d5; font-size: 14px; display: none; align-items: center; gap: 10px; }
 #offline.on { display: flex; animation: pop .3s var(--ease); }
-#offline .spinner { --size: 18px; --dot: 3px; color: var(--error); }
+#offline .spinner { --size: 18px; color: var(--error); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -329,7 +361,7 @@ body.boxed #veil { display: grid; animation: fade .2s; }
 <div id="hold"><i></i></div>
 <div id="toasts"></div>
 <div id="sim">SIMULATOR card UID: <input id="uid" value="04A1B2C3D4E5F6"><button id="tap">Tap card</button></div>
-<div id="offline"><span class="spinner" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>Kiosk service not responding, reconnecting…</div>
+<div id="offline"><span class="spinner" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Kiosk service not responding, reconnecting…</div>
 
 <script>
 // The kiosk screen. Python (web_kiosk.py) decides everything; this page only draws
@@ -554,7 +586,7 @@ function showScreen(s) {
 }
 
 function drawView(s) {
-  if (s.busy) return h("div.hero", {}, h("div.spinner", { style: "--size: 64px; --dot: 8px" }, ...Array(5).fill(0).map(() => h("i"))),
+  if (s.busy) return h("div.hero", {}, h("div.spinner", { style: "--size: 64px" }, ...Array(4).fill(0).map(() => h("i"))),
                        h("h1", {}, s.title), s.lines.map(l => textP(l)));
   switch (s.keyboard) {
     case "id": return drawId(s);
