@@ -161,7 +161,7 @@ def test_admin_who_is_here(services):
     users.enroll_tag("CAFE", users.add("taylor", "D")["id"])
     tap(controller, reader, "CAFE")
     screen = press(controller, "*2468#23")
-    assert screen.title == "Here now: 1" and screen.lines[0].startswith("D001  taylor")
+    assert screen.title == "Here now: 1" and screen.rows[0]["name"] == "taylor"
     assert press(controller, "*").title == "Hours"
     assert press(controller, "*").title == "Admin"
     press(controller, "*")

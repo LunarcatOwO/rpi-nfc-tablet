@@ -495,3 +495,22 @@ def test_uptime_formats():
     for seconds, text in [(59, "Up: 0m"), (600, "Up: 10m"), (3 * 86400 + 7200, "Up: 3d 2h")]:
         read_text = files({"/proc/uptime": f"{seconds}.5 1.0\n"})
         assert text in actions(FakeRun(), read_text).info_lines()
+
+
+def test_info_has_cpu_memory_and_bars():
+    stat = iter(["cpu  100 0 100 700 100 0 0 0\n", "cpu  160 0 120 800 120 0 0 0\n"])
+    contents = {"/sys/class/thermal/thermal_zone0/temp": "51000\n",
+                "/proc/meminfo": "MemTotal:  4000000 kB\nMemFree: 100 kB\nMemAvailable:  3000000 kB\n"}
+
+    def read_text(path):
+        return next(stat) if path == "/proc/stat" else files(contents)(path)
+
+    system = SystemActions(run=FakeRun(), read_text=read_text, ip=lambda: "10.0.0.7",
+                           disk_usage=lambda _p: SimpleNamespace(free=25e9, total=100e9))
+    first = {label: (value, meter) for label, value, meter in system.info()}
+    assert first["CPU"] == ("20%", 20)                  # since boot: 200 busy of 1000
+    assert first["Memory"] == ("1.0 of 4.0 GB", 25)
+    assert first["CPU temp"] == ("51.0 °C", 60)         # 51 of 85 °C
+    assert first["Free space"] == ("25.0 GB", 75)       # 75% of the disk used
+    second = {label: value for label, value, _ in system.info()}
+    assert second["CPU"] == "40%"                       # since last look: 80 busy of 200

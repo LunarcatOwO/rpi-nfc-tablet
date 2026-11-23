@@ -31,6 +31,27 @@ class NfcWorker(threading.Thread):
         self.controller = controller
         self.publish = publish
         self._stopped = threading.Event()
+        # How the reader is doing, for System info. Only this thread talks to the
+        # reader; the screen reads these instead of asking the PN532 itself.
+        self.last_ok: float | None = None     # monotonic time of the last good poll
+        self.last_card: float | None = None   # ...and of the last card seen
+        self.failures = 0                     # failed polls in a row
+
+    def status(self, now: float | None = None) -> str:
+        """"Working · last card 2m ago", "Not answering (3 failed reads)"..."""
+        now = time.monotonic() if now is None else now
+        if self.failures:
+            return f"Not answering ({self.failures} failed read{'s' if self.failures != 1 else ''})"
+        if self.last_ok is None:
+            return "Starting"
+        if now - self.last_ok > 10:
+            return "Stuck (no answer for {:.0f} s)".format(now - self.last_ok)
+        if self.last_card is None:
+            return "Working · no card yet"
+        ago = int(now - self.last_card)
+        when = (f"{ago}s" if ago < 60 else f"{ago // 60}m" if ago < 3600
+                else f"{ago // 3600}h {ago % 3600 // 60}m")
+        return f"Working · last card {when} ago"
 
     def run(self) -> None:
         present: str | None = None  # the card on the reader now, if any
@@ -39,14 +60,18 @@ class NfcWorker(threading.Thread):
                 uid = self.reader.read_uid()  # waits up to poll_timeout for a card
             except Exception:  # I2C hiccups shouldn't kill the kiosk
                 log.exception("NFC read failed")
+                self.failures += 1
                 time.sleep(1)
                 continue
+            self.last_ok = time.monotonic()
+            self.failures = 0
             if uid is None:
                 present = None  # card taken away: the next tap counts again
                 continue
             if uid == present:
                 continue  # same card still sitting on the reader
             present = uid
+            self.last_card = self.last_ok
             try:
                 screen = self.controller.handle_card(uid)
             except Exception as exc:

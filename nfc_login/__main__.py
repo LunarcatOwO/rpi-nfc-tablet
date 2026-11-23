@@ -102,7 +102,9 @@ def run_web_ui(port, controller, config, reader, simulated, updates) -> None:
     kiosk = WebKiosk(controller, config.ui, simulated_reader=simulated, updates=updates)
     server = serve(kiosk, port)
     kiosk.on_restart = server.shutdown  # a restart stops serve_forever() below
-    NfcWorker(reader, controller, kiosk.publish).start()
+    worker = NfcWorker(reader, controller, kiosk.publish)
+    controller.reader_status = worker.status   # System info: how the reader is doing
+    worker.start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

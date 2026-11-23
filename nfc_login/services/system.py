@@ -40,6 +40,9 @@ NOT_ALLOWED = "The kiosk isn't allowed to change Wi-Fi on this Pi."
 
 THERMAL_FILE = "/sys/class/thermal/thermal_zone0/temp"  # CPU temperature in 1/1000 °C
 UPTIME_FILE = "/proc/uptime"                             # seconds since boot
+STAT_FILE = "/proc/stat"                                 # CPU time counters, for CPU use
+MEMINFO_FILE = "/proc/meminfo"                           # memory totals in kB
+HOT_CELSIUS = 85         # the Pi 4 slows itself down here: the temperature bar is full
 INFO_WIDTH = 40          # the System info screen fits about this many characters a line
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -164,34 +167,72 @@ class SystemActions:
             return words[0]
         return f"{words[0]} ({day.day} {MONTHS[day.month - 1]} {day.year})"
 
-    def info_lines(self) -> list[str]:
-        """Short lines for the System info screen. Never raises; unknown bits are left out."""
-        lines = [
-            _quiet(lambda: f"Host: {socket.gethostname()}"),
-            f"IP: {_quiet(self._ip) or 'not connected'}",
-            f"Wi-Fi: {_quiet(self.current_wifi) or 'not connected'}",
-            f"Version: {_quiet(self.version) or 'unknown'}",
-            _quiet(self._cpu_temp_line),
-            _quiet(self._free_space_line),
-            _quiet(self._uptime_line),
-            _quiet(self._power_line),
+    def info(self) -> list[tuple[str, str, float | None]]:
+        """System info as (label, value, meter) for the System info screen, which
+        asks again every couple of seconds while it's open. meter is 0-100 for a bar
+        (CPU, memory, temperature, disk), else None. Never raises; unknown bits are left out."""
+        items = [
+            ("Host", _quiet(socket.gethostname), None),
+            ("IP", _quiet(self._ip) or "not connected", None),
+            ("Wi-Fi", _quiet(self.current_wifi) or "not connected", None),
+            ("Version", _quiet(self.version) or "unknown", None),
+            _quiet(self._cpu_use),
+            _quiet(self._memory),
+            _quiet(self._cpu_temp),
+            _quiet(self._free_space),
+            _quiet(self._uptime),
+            _quiet(self._power),
         ]
-        return [_trim(line, INFO_WIDTH) for line in lines if line]
+        return [(label, value, None if meter is None else round(meter, 1))
+                for label, value, meter in (item for item in items if item and item[1])]
 
-    def _cpu_temp_line(self) -> str:
-        millidegrees = int(self._read_text(THERMAL_FILE).strip())
-        return f"CPU temp: {millidegrees / 1000:.1f} °C"
+    def info_lines(self) -> list[str]:
+        """info() as short "Label: value" lines."""
+        return [_trim(f"{label}: {value}", INFO_WIDTH) for label, value, _ in self.info()]
 
-    def _free_space_line(self) -> str:
-        return f"Free space: {self._disk_usage(self.repo_dir).free / 1e9:.1f} GB"
+    def _cpu_use(self):
+        # /proc/stat's first line adds up time spent busy and idle since boot; the
+        # change since the last look is how busy the CPU is now.
+        fields = [int(n) for n in self._read_text(STAT_FILE).splitlines()[0].split()[1:]]
+        idle, total = fields[3] + (fields[4] if len(fields) > 4 else 0), sum(fields)
+        last_idle, last_total = getattr(self, "_cpu_last", (0, 0))
+        self._cpu_last = (idle, total)
+        if total <= last_total:
+            return None
+        busy = 100 * (1 - (idle - last_idle) / (total - last_total))
+        busy = min(max(busy, 0), 100)
+        return ("CPU", f"{busy:.0f}%", busy)
 
-    def _uptime_line(self) -> str:
+    def _memory(self):
+        kb = {}
+        for line in self._read_text(MEMINFO_FILE).splitlines():   # "MemTotal:  3884332 kB"
+            name, _, rest = line.partition(":")
+            kb[name] = int(rest.split()[0])
+        total, free = kb["MemTotal"], kb["MemAvailable"]
+        used = total - free
+        return ("Memory", f"{used / 1e6:.1f} of {total / 1e6:.1f} GB", 100 * used / total)
+
+    def _cpu_temp(self):
+        celsius = int(self._read_text(THERMAL_FILE).strip()) / 1000
+        return ("CPU temp", f"{celsius:.1f} °C", min(max(100 * celsius / HOT_CELSIUS, 0), 100))
+
+    def _free_space(self):
+        disk = self._disk_usage(self.repo_dir)
+        total = getattr(disk, "total", 0)
+        used = 100 * (total - disk.free) / total if total else None
+        return ("Free space", f"{disk.free / 1e9:.1f} GB", used)
+
+    def _uptime(self):
         minutes = int(float(self._read_text(UPTIME_FILE).split()[0])) // 60
         days, minutes = divmod(minutes, 24 * 60)
         hours, minutes = divmod(minutes, 60)
         if days:
-            return f"Up: {days}d {hours}h"
-        return f"Up: {hours}h {minutes}m" if hours else f"Up: {minutes}m"
+            return ("Up", f"{days}d {hours}h", None)
+        return ("Up", f"{hours}h {minutes}m" if hours else f"{minutes}m", None)
+
+    def _power(self):
+        warning = self._power_line()
+        return ("Power supply", warning.split(": ", 1)[1], None) if warning else None
 
     def _power_line(self) -> str | None:
         """Only shown when the Pi's power supply has been too weak (a common cause of

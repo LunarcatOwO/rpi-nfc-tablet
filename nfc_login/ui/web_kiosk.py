@@ -44,6 +44,7 @@ SOUNDS = Path(__file__).with_name("sounds")   # sign-in, error... wav files the 
 FONTS = Path(__file__).with_name("fonts")     # Roboto + Roboto Mono, bundled so the kiosk works offline
 KEYS = set("0123456789*#?~ABCDEFGHIJKLMNOPQRSTUVWXYZ")  # every key a button can send (X = back)
 RESTART_DELAY_SECONDS = 2.5      # time to read "Restarting..." first
+LIVE_SECONDS = 2                 # System info refreshes this often while it's open
 
 
 def control_pipe():
@@ -82,6 +83,7 @@ class WebKiosk:
         # (PIN hashing, database calls) never blocks the web server.
         threading.Thread(target=self._key_loop, daemon=True, name="keys").start()
         threading.Thread(target=self._tick, daemon=True, name="kiosk-tick").start()
+        threading.Thread(target=self._live, daemon=True, name="kiosk-live").start()
 
     # ------------------------------------------------------------ screens
 
@@ -186,6 +188,16 @@ class WebKiosk:
                     self.publish(self.controller.idle_screen(), sound=False)
             except Exception:
                 log.exception("kiosk tick failed")
+
+    def _live(self) -> None:
+        # System info shows fresh numbers every LIVE_SECONDS while it's open. Its own
+        # thread, so a slow nmcli or git never holds up the timeouts in _tick.
+        while True:
+            time.sleep(LIVE_SECONDS)
+            try:
+                self.controller.refresh_live(lambda screen: self.publish(screen, sound=False))
+            except Exception:
+                log.exception("live refresh failed")
 
     # ------------------------------------------------------------ listeners
 

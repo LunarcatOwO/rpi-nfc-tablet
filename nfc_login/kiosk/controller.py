@@ -73,6 +73,7 @@ HOURS_MENU = "hours_menu"
 HERE_LIST = "here_list"       # admin: who is here, a page at a time
 OFF_LIST = "off_list"         # admin: who is deactivated, a page at a time
 SYSTEM_MENU = "system_menu"
+SYSTEM_INFO = "system_info"   # System > System info: refreshes itself while open
 MENUS = (ADMIN_MENU, PEOPLE_MENU, HOURS_MENU, SYSTEM_MENU)
 
 # People
@@ -137,7 +138,7 @@ BACK = {
     ADJUST_ID: HOURS_MENU, TOGGLE_ID: HOURS_MENU, SEASON_PIN: HOURS_MENU, HERE_LIST: HOURS_MENU,
     PAST_LIST: HOURS_MENU, PAST_SEASON: PAST_LIST,
     SCHEDULE: HOURS_MENU, SCHEDULE_TIME: SCHEDULE, SCHEDULE_KEEP: SCHEDULE_TIME,
-    SCHEDULE_ITEM: SCHEDULE,
+    SCHEDULE_ITEM: SCHEDULE, SYSTEM_INFO: SYSTEM_MENU,
     BLOCKS: HOURS_MENU, BLOCK_START: BLOCKS, BLOCK_END: BLOCK_START, BLOCK_ITEM: BLOCKS,
     ADJUST_AMOUNT: ADJUST_ID,
     UPDATE_CONFIRM: SYSTEM_MENU, WIFI_LIST: SYSTEM_MENU, ADMINPIN_NEW: SYSTEM_MENU,
@@ -152,6 +153,8 @@ VIEWS = {
     USER_MENU: "dialog", CONFIRM: "dialog", UPDATE_CONFIRM: "dialog",
     SCHEDULE_KEEP: "dialog", SCHEDULE_ITEM: "dialog", BLOCK_ITEM: "dialog",
     PICK_TEAM: "teams", NEW_TEAM: "teams", ENROLL_SCAN: "scan", BOARD: "board",
+    SYSTEM_INFO: "info", WIFI_LIST: "wifi",
+    HERE_LIST: "list", OFF_LIST: "list", PAST_SEASON: "list",
 }
 NAV = {PEOPLE_MENU: "people", HOURS_MENU: "hours", SYSTEM_MENU: "system"}
 CONFIRM_VERBS = {"restart_app": "Restart", "close_app": "Close it", "reboot": "Restart",
@@ -171,6 +174,7 @@ WIFI_FIELDS = {"username": ("username", "Username"),
                "domain": ("domain", "Server domain")}
 MAX_WIFI_LIST = 8
 HERE_PAGE = 8                 # people per page on the admin lists
+INFO_TIMEOUT = 300            # System info is left open longer: it's watched, not touched
 SEARCH_SHOWN = 4              # name search results that fit above the keyboard
 DAY_NAMES_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 MAX_PIN_FAILURES = 5
@@ -306,6 +310,9 @@ class KioskController:
         self.reopen_hint = reopen_hint   # shown when the app is closed from the menu
         # The window sets this so background jobs can show their result.
         self.publish: Callable[[Screen], None] | None = None
+        # The card thread sets this: "Working · last card 2m ago". System info shows
+        # it rather than asking the reader (only the card thread may talk to it).
+        self.reader_status: Callable[[], str] | None = None
         # team button key -> section letter, normally {"A": "A", "B": "B", ...}
         self.section_keys = {s["key"]: s["letter"] for s in users.sections if s["key"]}
         self.mentors = ids.MENTORS in users.section_names
@@ -576,8 +583,8 @@ class KioskController:
         """The side list in the admin menus: jump to People, Hours or System."""
         target = {"people": PEOPLE_MENU, "hours": HOURS_MENU, "system": SYSTEM_MENU}.get(menu)
         with self._lock:
-            # Only from a menu: the admin PIN has been typed, and nothing is half done.
-            if target is None or self.state not in MENUS:
+            # Only from a menu (or System info): the admin PIN has been typed, nothing is half done.
+            if target is None or self.state not in (*MENUS, SYSTEM_INFO):
                 return None
             self._last_input = self.monotonic()
             return self._go(target, {})
@@ -611,6 +618,8 @@ class KioskController:
         with self._lock:
             # The leaderboard gets longer: scrolling it doesn't count as a touch.
             limit = self.idle_timeout * (3 if self.state == BOARD else 1)
+            if self.state == SYSTEM_INFO:
+                limit = max(limit, INFO_TIMEOUT)
             if (self.state not in (IDLE, BUSY)
                     and self.monotonic() - self._last_input > limit):
                 self._reset()
@@ -632,8 +641,6 @@ class KioskController:
             return self._redraw()
         # Empty entry (or only the team letter): go back a step.
         self.buffer = ""
-        if self.state in MENUS and self.context.pop("viewing", False):
-            return self._redraw()
         if self.context.get("from_person") and self.state in AFTER_PERSON:
             return self._open_person(self.context["user"]["id"])
         if self.state == NAME_SEARCH:   # back to the ID screen (or People)
@@ -898,8 +905,7 @@ class KioskController:
         if key in ("2", "3", "5", "6", "7", "8") and self._installing():
             return self._error_keep_state("An update is being installed. Try again after.")
         if key == "1":
-            self.context["viewing"] = True  # back goes to the menu, not out of it
-            return Screen("System info", self._info_lines(), "info", nav="system")
+            return self._go(SYSTEM_INFO, {})
         if key == "2":
             return self._check_updates()
         if key == "3":
@@ -921,19 +927,38 @@ class KioskController:
             return self._confirm(action, SYSTEM_MENU)
         return None
 
-    def _info_lines(self) -> list[str]:
-        """Lines for System info."""
-        reader = self.reader.firmware_version() if self.reader else "no reader"
-        if self.system is not None:
-            lines = self.system.info_lines()
-        else:
-            lines = [f"Host: {socket.gethostname()}", f"IP: {local_ip()}"]
-        lines.append(f"NFC: {reader}")
+    def _info_screen(self) -> Screen:
+        """System info: label/value cards (stats), plus notes (an update, setup needed)."""
+        if self.system is not None and hasattr(self.system, "info"):
+            facts = [list(item) for item in self.system.info()]
+        else:   # an older SystemActions (or none): "Label: value" lines
+            lines = (self.system.info_lines() if self.system is not None
+                     else [f"Host: {socket.gethostname()}", f"IP: {local_ip()}"])
+            facts = [[*line.split(": ", 1), None] for line in lines if ": " in line]
+        # The firmware was asked once at startup and is cached: no new reader call here.
+        facts.append(["NFC reader", self.reader.firmware_version() if self.reader else "no reader",
+                      None])
+        if self.reader_status is not None:
+            facts.append(["Reader", self.reader_status(), None])
+        notes = []
         if self.updates is not None and self.updates.available:
-            lines.append(f"Update: {self.updates.new_commits} new change(s), System > Install update")
+            notes.append(f"Update: {self.updates.new_commits} new change(s), System > Install update")
         if self._setup_needed():
-            lines.append(SETUP_REMINDER)
-        return lines
+            notes.append(SETUP_REMINDER)
+        return Screen("System info", notes, "info", view="info", nav="system", stats=facts)
+
+    def refresh_live(self, publish: Callable[[Screen], None]) -> bool:
+        """While System info is showing, publish it again with fresh numbers.
+        The window calls this every couple of seconds. True if it published."""
+        if self.state != SYSTEM_INFO:
+            return False
+        screen = self._info_screen()   # nmcli and git can be slow: not under the lock
+        with self._lock:
+            # Published under the lock, so a tap that left the screen meanwhile wins.
+            if self.state != SYSTEM_INFO:
+                return False
+            publish(screen)
+            return True
 
     def _setup_needed(self) -> bool:
         return self.updates is not None and getattr(self.updates, "setup_needed", False)
@@ -1683,6 +1708,8 @@ class KioskController:
             if self._setup_needed():
                 lines.insert(0, SETUP_REMINDER)
             return Screen("System", lines, "prompt")
+        if state == SYSTEM_INFO:
+            return self._info_screen()
         if state == USER_MENU:
             return self._user_menu_screen()
         if state == CONFIRM:
@@ -1875,27 +1902,32 @@ class KioskController:
                      + f"  {net.kind}"
                      + ("  (connected)" if net.in_use else "")
                      for n, net in enumerate(networks, start=1)]
+            # The same networks as rows, so the page can draw signal bars and a lock.
+            rows = [{"key": str(n), "name": net.ssid, "signal": net.signal,
+                     "kind": net.kind, "secured": net.secured, "in_use": net.in_use}
+                    for n, net in enumerate(networks, start=1)]
             return Screen("Wi-Fi networks", (lines or ["No networks found."])
-                          + ["", "#  Scan again"], "prompt")
+                          + ["", "#  Scan again"], "prompt", rows=rows)
         if state == HERE_LIST:
             rows = self.attendance.currently_signed_in()
             pages = max(1, -(-len(rows) // HERE_PAGE))  # round up
             page = ctx["page"] % pages                  # past the last page: back to the first
             ctx["page"] = page
-            lines = [f"{r['code']}  {_cut(r['username'], 22)}  since {r['sign_in_at']:%H:%M}"
-                     for r in rows[page * HERE_PAGE:(page + 1) * HERE_PAGE]]
+            people = [self._person_row(r, f"since {r['sign_in_at']:%H:%M}")
+                      for r in rows[page * HERE_PAGE:(page + 1) * HERE_PAGE]]
             footer = [f"Page {page + 1} of {pages}", "#  Next page"] if pages > 1 else []
-            return Screen(f"Here now: {len(rows)}", (lines or ["Nobody"]) + footer, "info")
+            return Screen(f"Here now: {len(rows)}", ([] if rows else ["Nobody"]) + footer,
+                          "info", rows=people)
         if state == OFF_LIST:
             rows = [u for u in self.users.list(include_inactive=True) if not u["is_active"]]
             pages = max(1, -(-len(rows) // HERE_PAGE))
             page = ctx["page"] % pages
             ctx["page"] = page
-            lines = [f"{u['code']}  {_cut(u['username'], 30)}"
-                     for u in rows[page * HERE_PAGE:(page + 1) * HERE_PAGE]]
+            people = [self._person_row(u) for u in rows[page * HERE_PAGE:(page + 1) * HERE_PAGE]]
             footer = ([f"Page {page + 1} of {pages}", "#  Next page"] if pages > 1 else [])
-            footer = ["", "Reactivate with People > Deactivate / reactivate.", *footer]
-            return Screen(f"Deactivated: {len(rows)}", (lines or ["Nobody"]) + footer, "info")
+            footer = ["Reactivate with People > Deactivate / reactivate.", *footer]
+            return Screen(f"Deactivated: {len(rows)}", ([] if rows else ["Nobody"]) + footer,
+                          "info", rows=people)
         if state == PAST_LIST:
             seasons = self.seasons.past()
             pages = max(1, -(-len(seasons) // HERE_PAGE))
@@ -1917,14 +1949,16 @@ class KioskController:
             pages = max(1, -(-len(rows) // HERE_PAGE))
             page = ctx["page"] % pages
             ctx["page"] = page
-            lines = [f"{e.rank:>2}. {e.code}  {_cut(e.username, 20)}  "
-                     f"{timefmt.format_duration(e.total_seconds)}"
-                     for e in rows[page * HERE_PAGE:(page + 1) * HERE_PAGE]]
+            ranked = [{"rank": e.rank, "name": e.username, "team": e.section,
+                       "sub": f"{e.code}  ·  {self.users.team_name(e.section, short=True)}",
+                       "right": timefmt.format_duration(e.total_seconds)}
+                      for e in rows[page * HERE_PAGE:(page + 1) * HERE_PAGE]]
             footer = ([f"Page {page + 1} of {pages}  ·  {total} in all", "#  Next page"]
-                      if pages > 1 else ["", f"{total} in all"])
+                      if pages > 1 else [f"{total} in all"])
             people = f"{len(rows)} {'person' if len(rows) == 1 else 'people'}"
             return Screen(f"Season {season['name']}: {people}",
-                          (lines or ["Nobody has time in this season."]) + footer, "info")
+                          ([] if rows else ["Nobody has time in this season."]) + footer, "info",
+                          rows=ranked)
         if state == UPDATE_CONFIRM:
             count = ctx["count"]
             lines = [f"•  {change[:44]}" for change in ctx["changes"][:4]]
@@ -2075,6 +2109,11 @@ class KioskController:
         }[action]
         return Screen(title, [*lines, "", f"*  Cancel      #  {CONFIRM_VERBS[action]}"],
                       "warning")
+
+    def _person_row(self, user: dict, right: str | None = None) -> dict:
+        """Someone as a row on the admin lists (avatar, name, ID and team)."""
+        return {"name": user["username"], "team": user["section"], "right": right,
+                "sub": f"{user['code']}  ·  {self.users.team_name(user['section'], short=True)}"}
 
     def _search_lines(self, found: list) -> list[str]:
         """The line under a name search: a hint, or how many more matched."""

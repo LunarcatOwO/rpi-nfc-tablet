@@ -229,6 +229,8 @@ def test_wifi_password_and_connect(services):
     jobs.run()
     screen = published.pop()
     assert screen.title == "Wi-Fi networks"
+    assert screen.view == "wifi" and screen.rows[0]["key"] == "1"
+    assert screen.rows[0]["name"] == "School Net" and screen.rows[0]["signal"] == 80
     assert screen.lines[:3] == ["1  School Net  80%  WPA2", "2  Guest  40%  open",
                                 "3  eduroam  30%  enterprise"]
     screen = press(controller, "1")
@@ -295,9 +297,36 @@ def test_system_info(services):
     controller, _users, _jobs, _published, _system = make(services)
     controller.updates.new_commits = 2
     screen = press(controller, "*2468#31")
-    assert screen.lines[:3] == ["Host: kiosk", "IP: 10.0.0.5", "NFC: simulated reader"]
+    assert screen.view == "info" and screen.nav == "system"
+    assert screen.stats[:3] == [["Host", "kiosk", None], ["IP", "10.0.0.5", None],
+                                ["NFC reader", "simulated reader", None]]
     assert "Update: 2 new change(s), System > Install update" in screen.lines
     assert press(controller, "*").title == "System"
+
+
+def test_system_info_refreshes_while_open(services):
+    controller, _users, _jobs, _published, system = make(services)
+    controller.reader_status = lambda: "Working · last card 5s ago"
+    shown = []
+    assert not controller.refresh_live(shown.append)          # not open: nothing
+    assert press(controller, "*2468#31").stats[-1] == ["Reader", "Working · last card 5s ago", None]
+    system.info_lines = lambda: ["Host: kiosk", "IP: 10.0.0.77"]
+    assert controller.refresh_live(shown.append)
+    assert shown[-1].title == "System info" and ["IP", "10.0.0.77", None] in shown[-1].stats
+    press(controller, "*")                                      # closed: stops
+    assert not controller.refresh_live(shown.append) and len(shown) == 1
+    # Left open, it waits longer than other admin screens before going back to the start.
+    press(controller, "1")
+    controller.monotonic = lambda: controller._last_input + controller.idle_timeout + 1
+    assert controller.check_timeout() is None
+    controller.monotonic = lambda: controller._last_input + kc.INFO_TIMEOUT + 1
+    assert controller.check_timeout().view == "idle"
+
+
+def test_side_list_works_from_system_info(services):
+    controller, *_ = make(services)
+    press(controller, "*2468#31")
+    assert controller.handle_nav("people").title == "People"
 
 
 def test_change_the_admin_pin(services):
@@ -563,10 +592,11 @@ def test_who_is_here_pages(services, clock):
         users.enroll_tag(f"04{n:02d}", users.add(f"Person {n}", "A")["id"])
         controller.handle_card(f"04{n:02d}")
     screen = press(controller, "*2468#23")
-    assert screen.title == "Here now: 19" and len(screen.lines) == 10
-    assert screen.lines[-2] == "Page 1 of 3" and screen.lines[-1] == "#  Next page"
+    assert screen.title == "Here now: 19" and screen.view == "list" and len(screen.rows) == 8
+    assert screen.rows[0]["sub"] == "A001  ·  Robot" and screen.rows[0]["right"].startswith("since ")
+    assert screen.lines == ["Page 1 of 3", "#  Next page"]
     assert press(controller, "##").lines[-2] == "Page 3 of 3"
-    assert len(controller._redraw().lines) == 3 + 2
+    assert len(controller._redraw().rows) == 3
     assert press(controller, "#").lines[-2] == "Page 1 of 3"            # round again
     assert press(controller, "*").title == "Hours"
 
@@ -581,10 +611,10 @@ def test_list_deactivated_people(services):
     for code in ("B002", "B005", *[f"B{n:03d}" for n in range(6, 11)], "B004", "B003"):
         users.set_active(code, False)
     screen = press(controller, "7")
-    assert screen.title == "Deactivated: 9" and screen.lines[0] == "B002  Person 1"
-    assert screen.lines[-1] == "#  Next page"
+    assert screen.title == "Deactivated: 9" and screen.rows[0]["name"] == "Person 1"
+    assert screen.rows[0]["sub"].startswith("B002") and screen.lines[-1] == "#  Next page"
     screen = press(controller, "#")
-    assert screen.lines[0] == "B010  Person 9" and screen.lines[-2].startswith("Page 2 of 2")
+    assert screen.rows[0]["name"] == "Person 9" and screen.lines[-2].startswith("Page 2 of 2")
     assert press(controller, "*").title == "People"
 
 
@@ -617,6 +647,8 @@ def test_past_seasons(services, clock):
     assert screen.title == "Past seasons: 1" and screen.lines[0].startswith(f"1  {first}  Sep 2026")
     screen = press(controller, "1")
     assert screen.title == f"Season {first}: 1 person"
-    assert screen.lines[0] == " 1. B001  Taylor  2h 00m" and screen.lines[-1] == "2h 00m in all"
+    assert screen.rows == [{"rank": 1, "name": "Taylor", "team": "B", "sub": "B001  ·  Impact",
+                            "right": "2h 00m"}]
+    assert screen.lines == ["2h 00m in all"]
     assert press(controller, "*").title == "Past seasons: 1"
     assert press(controller, "*").title == "Hours"

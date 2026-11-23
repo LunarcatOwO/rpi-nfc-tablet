@@ -168,9 +168,51 @@ p { margin: 0; }
 .item:active { background: var(--key); }
 .item span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .item small { display: block; font-size: 14px; font-weight: 400; color: var(--muted); margin-top: 3px; }
-.item .ii { flex: none; width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center;
+.ii { flex: none; width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center;
   background: linear-gradient(140deg, color-mix(in srgb, var(--ic) 22%, transparent), color-mix(in srgb, var(--ic) 5%, transparent));
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+/* an item's value ("Username: bob") on the right, and tick boxes (which days) */
+.item .ii, .item .cb { flex: none; }
+.item .val { flex: none; max-width: 55%; font: 500 16px var(--mono); color: var(--soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cb { flex: none; width: 30px; height: 30px; border-radius: 8px; box-shadow: inset 0 0 0 2px var(--line2); display: grid; place-items: center; }
+.cb.on { background: var(--info); box-shadow: none; color: #04111f; animation: pop .15s; }
+
+/* System info: four gauges, then label / value rows. It refreshes every 2 s while open;
+   the numbers change in place and the bars slide. */
+.livebar { display: flex; align-items: center; gap: 12px; }
+.livebar .text { flex: 1; color: var(--muted); font-size: 15px; }
+.live { display: inline-flex; align-items: center; gap: 8px; font: 600 12px var(--mono); letter-spacing: .12em;
+  text-transform: uppercase; color: var(--success); }
+.live i { width: 8px; height: 8px; border-radius: 50%; background: var(--success); animation: ping 2s infinite; }
+@keyframes ping { 0% { box-shadow: 0 0 0 0 rgba(74,222,128,.6); } 70%, 100% { box-shadow: 0 0 0 8px rgba(74,222,128,0); } }
+.gauges { display: grid; grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr)); gap: 1px; background: var(--line);
+  border: 1px solid var(--line); border-radius: 14px; overflow: hidden; flex: none; }
+.gauge { background: var(--panel); padding: 12px 16px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.gauge .gl { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+.gauge b { font: 600 26px var(--mono); letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gauge small { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meter { height: 6px; border-radius: 3px; background: var(--key); overflow: hidden; margin-top: 2px; }
+.meter i { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--mc, var(--info));
+  transition: width .7s var(--ease), background-color .4s; }
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line);
+  border: 1px solid var(--line); border-radius: 14px; overflow: hidden; flex: none; }
+.fact { background: var(--panel); display: flex; align-items: center; gap: 12px; padding: 8px 16px; min-height: 54px; min-width: 0; }
+.fact.wide { grid-column: 1 / -1; }
+.fact .ii { width: 34px; height: 34px; border-radius: 9px; }
+.fact span { flex: none; font-size: 15px; color: var(--muted); }
+.fact b { flex: 1; min-width: 0; text-align: right; font: 500 16px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fact.bad b { color: var(--error); }
+
+/* Wi-Fi networks: signal bars, security, and which one is in use */
+.bars { flex: none; width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center;
+  background: linear-gradient(140deg, rgba(82,169,255,.2), rgba(82,169,255,.04)); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+.pill { flex: none; font-size: 14px; font-weight: 600; padding: 5px 12px; border-radius: 999px; }
+.pill.ok { color: var(--success); background: rgba(74,222,128,.12); box-shadow: inset 0 0 0 1px rgba(74,222,128,.4); }
+/* a list with nobody in it */
+.emptybox { display: flex; align-items: center; gap: 16px; padding: 22px 20px; border-radius: 14px; background: var(--panel);
+  border: 1px dashed var(--line2); color: var(--muted); font-size: 18px; }
+.listfoot { margin-top: auto; padding-top: 4px; }
+.listfoot .text { font-size: 16px; color: var(--muted); }
 
 /* admin home: three tiles */
 .tiles { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin: 24px;
@@ -504,6 +546,13 @@ const ICONS = {
   closex: '<rect x="6" y="6" width="36" height="36" rx="6"/><path d="M18 18l12 12M30 18 18 30"/>',
   power: '<path d="M24 6v16M14 12a16 16 0 1 0 20 0"/>',
   minimize: '<rect x="6" y="6" width="36" height="36" rx="6"/><path d="M16 32h16"/>',
+  // System info
+  cpu: '<rect x="12" y="12" width="24" height="24" rx="3"/><path d="M19 19h10v10H19zM18 6v6M30 6v6M18 36v6M30 36v6M6 18h6M6 30h6M36 18h6M36 30h6"/>',
+  memory: '<rect x="4" y="14" width="40" height="18" rx="3"/><path d="M12 20v6M20 20v6M28 20v6M36 20v6M10 32v6M38 32v6"/>',
+  thermo: '<path d="M20 28V9a4 4 0 0 1 8 0v19a9 9 0 1 1-8 0z"/><path d="M24 20v14"/>',
+  disk: '<ellipse cx="24" cy="11" rx="16" ry="5"/><path d="M8 11v26c0 2.8 7.2 5 16 5s16-2.2 16-5V11M8 24c0 2.8 7.2 5 16 5s16-2.2 16-5"/>',
+  globe: '<circle cx="24" cy="24" r="18"/><path d="M6 24h36M24 6a28 28 0 0 1 0 36M24 6a28 28 0 0 0 0 36"/>',
+  tag: '<path d="M8 8h16l18 18-16 16L8 24z"/><path d="M17 17h.01"/>',
 };
 function icon(name, size, color, width = 2.4) {
   const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -645,17 +694,39 @@ const ITEM_LOOK = [
   ["Restart the Pi", "power", "warning", "Reboot the whole tablet"],
   ["Shut down the Pi", "power", "error", "Safe to unplug after"],
   ["Minimize the kiosk app", "minimize", "muted", "Card scans keep counting"],
+  // Wi-Fi sign-in (enterprise networks)
+  ["Username", "idcard", "info"], ["Password", "key", "warning"], ["Sign-in method", "lock", "prompt"],
+  ["Anonymous identity", "people", "muted"], ["Check the server certificate", "check", "success"],
+  ["Server domain", "globe", "info"],
 ];
+// Lists with no look of their own get one icon for every item, by the screen's title.
+const PAGE_LOOK = [["Sign-in blocks", "calx", "warning"], ["Scheduled sign-out", "timer", "info"],
+                   ["Past seasons", "history", "prompt"]];
 function itemLook(label) {
   return ITEM_LOOK.find(([start]) => label.startsWith(start));
 }
-function itemList(items, cols, subs = true) {
+// An item's label, read for extras: "✓  Monday" is a tick box, "Username: bob" a value
+// on the right, and "09:00 to 15:00  ·  Mon-Fri" (or two spaces) a smaller second line.
+function itemParts(label) {
+  let m = /^([✓○]) {2}(.*)$/.exec(label);
+  if (m) return { box: m[1] === "✓", name: m[2] };
+  m = /^([^:]+): (.+)$/.exec(label);
+  if (m) return { name: m[1], value: m[2] };
+  m = /^(.+?)(?: {2}· {2}| {2,})(.+)$/.exec(label);
+  if (m) return { name: m[1], sub: m[2] };
+  return { name: label };
+}
+function itemList(items, cols, subs = true, pageLook = null) {
   return h("div.items", { style: `--cols: ${cols}` }, items.map(([k, label]) => {
-    const look = itemLook(label);
+    const parts = itemParts(label);
+    const look = itemLook(parts.name) || pageLook;
     const color = look && `var(--${look[2]})`;
+    const small = parts.sub || (subs && look && look[3]);
     return h("button.item", { on: () => sendKey(k) },
-      look ? h("span.ii", { style: `--ic: ${color}` }, icon(look[1], 22, color, 3)) : null,
-      h("span", {}, label, subs && look && look[3] ? h("small", {}, look[3]) : null),
+      "box" in parts ? h(`span.cb${parts.box ? ".on" : ""}`, {}, parts.box ? icon("check", 20, null, 4) : null)
+        : look ? h("span.ii", { style: `--ic: ${color}` }, icon(look[1], 22, color, 3)) : null,
+      h("span", {}, parts.name, small ? h("small", {}, small) : null),
+      parts.value ? h("span.val", {}, parts.value) : null,
       icon("chev", 20, "#64748b"));
   }));
 }
@@ -666,7 +737,7 @@ function textP(line, cls = "") {
 function drawBlocks(lines, opts = {}) {
   return blocks(lines).map((b, i) => {
     if (b.text !== undefined) return textP(b.text, i === 0 && opts.error ? ".err" : (opts.mono ? ".mono" : ""));
-    if (b.items) return itemList(b.items, b.items.length >= 5 ? 2 : 1);
+    if (b.items) return itemList(b.items, b.items.length >= 5 ? 2 : 1, true, opts.look);
     return actButtons(b.acts, opts);
   });
 }
@@ -719,8 +790,10 @@ function showScreen(s) {
   if (mode === "id" || mode === "numpad") drawPad(s);
   const view = drawView(s);
   view.classList.add("view");
+  if (!fresh && s.view === "info" && patchInfo(view)) return;   // live numbers, changed in place
   if (!fresh) view.style.animation = "none";   // the same screen, updated: no slide
   $("content").replaceChildren(view);
+  requestAnimationFrame(() => view.querySelectorAll("[data-w]").forEach(m => { m.style.width = m.dataset.w; }));
   holdBar(fresh ? s.hold : undefined);
 }
 
@@ -740,9 +813,13 @@ function drawView(s) {
     case "teams": return drawTeams(s);
     case "menu": return h("div.page.scroll", {}, drawBlocks(s.lines, { error: s.tone === "error" }));
     case "board": return drawBoard(s);
+    case "info": return drawInfo(s);
+    case "wifi": return drawWifi(s);
+    case "list": return drawList(s);
   }
   if (s.person) return drawPerson(s);
-  return h("div.page.scroll", {}, drawBlocks(s.lines, { error: s.tone === "error", mono: true }));
+  const look = PAGE_LOOK.find(([start]) => s.title.startsWith(start));
+  return h("div.page.scroll", {}, drawBlocks(s.lines, { error: s.tone === "error", mono: true, look }));
 }
 
 // People as rows: a rank or avatar, the name, their ID and team, and time.
@@ -794,8 +871,109 @@ function drawIdle(s) {
       : actButtons(b.acts, { icon: "pad", plain: true })));
 }
 function drawScan(s) {
-  return h("div.hero", {}, h("h1", {}, s.title),
-           drawBlocks(s.lines));
+  return h("div.hero", {}, h("div.ring", {}, icon("card", 76, "var(--accent)", 2.2)),
+           h("h1", { style: "font-size: 38px" }, s.title), drawBlocks(s.lines));
+}
+
+// ---------------------------------------------------------------- System info
+// Gauges for the numbers with a bar, the rest as label / value rows. Values come from
+// stats: [label, value, meter 0-100 or null].
+const GAUGES = {
+  "CPU": ["cpu", m => [`${Math.round(m)}%`, "in use"], [70, 90]],
+  "Memory": ["memory", (m, v) => [`${Math.round(m)}%`, v], [75, 90]],
+  "CPU temp": ["thermo", (m, v) => [v.replace(" °C", "°C"), "slows down at 85°C"], [70, 88]],
+  "Free space": ["disk", (m, v) => [v, `free · ${Math.round(m)}% used`], [85, 95]],
+};
+const FACT_ICONS = { "Host": ["screen", "info"], "IP": ["globe", "info"], "Wi-Fi": ["wifi", "info"],
+  "Version": ["tag", "prompt"], "Up": ["clock", "success"], "Power supply": ["power", "error"],
+  "NFC reader": ["card", "warning"], "Reader": ["card", "warning"] };
+function meterColor(m, [warn, bad]) { return m >= bad ? "var(--error)" : m >= warn ? "var(--warning)" : "var(--success)"; }
+function drawInfo(s) {
+  const gauges = s.stats.filter(([label, , m]) => GAUGES[label] && m !== null);
+  const facts = s.stats.filter(f => !gauges.includes(f));
+  const notes = s.lines.filter(l => l.trim());
+  const sig = JSON.stringify([s.stats.map(f => f[0]), notes]);
+  return h("div.page.scroll.info", { "data-sig": sig, style: "gap: 12px" },
+    h("div.livebar", {}, h("span.live", {}, h("i"), "Live"), h("p.text", {}, "Updates every 2 seconds while this is open")),
+    notes.map(n => h("p.text.err", { style: "animation: none" }, n)),
+    gauges.length ? h("div.gauges", { style: `--cols: ${gauges.length}` }, gauges.map(([label, value, m]) => {
+      const [ic, show, limits] = GAUGES[label], [big, small] = show(m, value), color = meterColor(m, limits);
+      return h("div.gauge", {},
+        h("div.gl", {}, icon(ic, 18, color, 2.6), label),
+        h("b", { "data-k": label }, big), h("small", { "data-k": label + ":sub" }, small),
+        h("div.meter", {}, h("i", { "data-m": label, "data-w": `${m}%`, style: `--mc: ${color}` })));
+    })) : null,
+    h("div.facts", {}, facts.map(([label, value], i) => {
+      const [ic, tone] = FACT_ICONS[label] || ["info", "muted"];
+      const bad = label === "Power supply" || (label === "Reader" && !/^Working/.test(value));
+      const wide = label === "Reader" || (i === facts.length - 1 && facts.length % 2 === 1);
+      return h(`div.fact${bad ? ".bad" : ""}${wide ? ".wide" : ""}`, { "data-f": label },
+        h("span.ii", { style: `--ic: var(--${tone})` }, icon(ic, 18, `var(--${tone})`, 3)),
+        h("span", {}, label), h("b", { "data-k": "f:" + label }, value));
+    })));
+}
+// The same screen with new numbers: change only what moved, so nothing flickers.
+function patchInfo(view) {
+  const old = $("content").querySelector(".view.info");
+  if (!old || old.dataset.sig !== view.dataset.sig) return false;
+  view.querySelectorAll("[data-k]").forEach(n => {
+    const o = old.querySelector(`[data-k="${CSS.escape(n.dataset.k)}"]`);
+    if (o && o.textContent !== n.textContent) o.textContent = n.textContent;
+  });
+  view.querySelectorAll("[data-m]").forEach(n => {
+    const o = old.querySelector(`[data-m="${CSS.escape(n.dataset.m)}"]`);
+    if (o) { o.style.width = n.dataset.w; o.style.setProperty("--mc", n.style.getPropertyValue("--mc")); }
+  });
+  view.querySelectorAll("[data-f]").forEach(n => {
+    const o = old.querySelector(`[data-f="${CSS.escape(n.dataset.f)}"]`);
+    if (o) o.classList.toggle("bad", n.classList.contains("bad"));
+  });
+  return true;
+}
+
+// ---------------------------------------------------------------- Wi-Fi and admin lists
+function signalBars(pct) {
+  const lit = pct >= 75 ? 4 : pct >= 50 ? 3 : pct >= 25 ? 2 : 1;
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("width", 22); s.setAttribute("height", 22);
+  s.setAttribute("aria-hidden", "true");
+  for (let i = 0; i < 4; i++) {
+    const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    const tall = 6 + i * 5;
+    r.setAttribute("x", 2 + i * 5.5); r.setAttribute("y", 22 - tall); r.setAttribute("width", 4);
+    r.setAttribute("height", tall); r.setAttribute("rx", 1.2);
+    r.setAttribute("fill", i < lit ? "var(--info)" : "var(--line2)");
+    s.append(r);
+  }
+  return s;
+}
+function drawWifi(s) {
+  const bl = blocks(s.lines);
+  const err = s.tone === "error" && bl[0] && bl[0].text !== undefined;
+  const rest = (err ? bl.slice(1) : bl).filter(b => !b.items && !(b.text !== undefined && !b.text.trim()));
+  return h("div.page.scroll", {},
+    err ? textP(bl[0].text, ".err") : null,
+    s.rows.length ? h("div.prows", {}, s.rows.map(n => h("button.prow", { on: () => sendKey(n.key) },
+      h("span.bars", {}, signalBars(n.signal)),
+      h("div.nm", {}, n.name, h("div", {}, `${n.signal}%  ·  ${n.kind}`)),
+      n.in_use ? h("span.pill.ok", {}, "Connected") : null,
+      n.secured ? icon("lock", 20, "#64748b", 2.6) : null,
+      icon("chev", 20, "#64748b")))) : null,
+    rest.map(b => b.text !== undefined ? h("div.emptybox", {}, icon("wifi", 26, null, 2.6), b.text)
+                                        : actButtons(b.acts)));
+}
+// Who's here, who's deactivated, a past season's ranking: people as rows, then the
+// page count, notes and Next page.
+function drawList(s) {
+  const bl = blocks(s.lines);
+  const texts = bl.filter(b => b.text !== undefined && b.text.trim()).map(b => b.text);
+  const acts = bl.filter(b => b.acts).flatMap(b => b.acts);
+  return h("div.page", {},
+    s.rows.length ? h("div.scroll", { style: "min-height: 0" }, personRows(s.rows, { cols: 2 }))
+      : h("div.emptybox", {}, icon("people", 26, null, 2.4), texts.shift()),
+    texts.length || acts.length ? h("div.boardtop.listfoot", {},
+      h("div", { style: "flex: 1" }, texts.map(t => h("p.text", {}, t))),
+      acts.map(([k, label]) => h("button.btn.press", { on: () => sendKey(keyFor(k)) }, label, icon("chev", 20)))) : null);
 }
 function drawResult(s) {
   const ic = { success: "check", error: "cross", warning: "warn" }[s.tone] || "check";
