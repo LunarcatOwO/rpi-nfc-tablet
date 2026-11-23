@@ -235,7 +235,14 @@ class WebKiosk:
                 "simulated": self.simulated_reader is not None,
                 "sounds": self.cfg.get("sounds", True),
                 "tap_sounds": self.cfg.get("tap_sounds", True),
+                "reader_side": reader_side(self.cfg.get("reader_side")),
                 "update": bool(self.updates and self.updates.available)}
+
+
+def reader_side(value) -> str:
+    """Which screen edge the card reader is beside: left, right or off (no cue)."""
+    value = str(value or "left").strip().lower()
+    return value if value in ("left", "right", "off") else "left"
 
 
 def screen_json(screen: Screen, sound: bool = True) -> dict:

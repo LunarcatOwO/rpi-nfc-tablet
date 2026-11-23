@@ -61,6 +61,7 @@ DEFAULTS: dict = {
         "idle_timeout_seconds": 30,    # an untouched screen goes back to the start after this
         "sounds": True,                # chimes from the screen's speakers
         "tap_sounds": True,            # a soft click on every tap
+        "reader_side": "left",         # screen edge the reader is beside: left, right or off
     },
     "seasons": {
         "archive_dir": "archive",      # CSVs of each finished season go here

@@ -47,6 +47,7 @@ result_seconds = 6              # how long a scan result stays on screen
 idle_timeout_seconds = 30       # an untouched screen goes back to the start after this
 sounds = true                   # chimes from the screen's speakers (sign in, sign out, errors)
 tap_sounds = true               # and a soft click on every tap
+reader_side = "left"            # the NFC arm's side of the screen: left, right, or off (no glow and arrows)
 
 [seasons]
 archive_dir = "archive"         # CSV snapshots written on every season reset

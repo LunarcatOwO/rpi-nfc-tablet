@@ -69,7 +69,7 @@ def test_keys_and_taps_reach_the_kiosk(kiosk):
     assert side["here"][0]["team"] == "Impact" and side["simulated"]
     assert [k["key"] for k in side["keys"]] == list("ABCD") and side["mentors"]
     assert side["teams"][-1]["letter"] == "M" and side["here"][0]["letter"] == "B"
-    assert side["sounds"] and side["tap_sounds"]
+    assert side["sounds"] and side["tap_sounds"] and side["reader_side"] == "left"
 
 
 def test_other_web_pages_cant_press_keys(kiosk):
@@ -194,3 +194,9 @@ def test_sound_files_are_served(kiosk):
         with pytest.raises(urllib.error.HTTPError) as err:
             urllib.request.urlopen(base + bad)
         assert err.value.code == 404
+
+
+def test_reader_side_falls_back_to_left():
+    from nfc_login.ui.web_kiosk import reader_side
+    assert reader_side("Right ") == "right" and reader_side("off") == "off"
+    assert reader_side(None) == "left" and reader_side("top") == "left"

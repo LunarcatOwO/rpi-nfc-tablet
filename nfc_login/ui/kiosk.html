@@ -328,6 +328,25 @@ body.boxed #veil { display: grid; animation: fade .2s; }
   background: #3a1d22; box-shadow: 0 0 0 1px var(--error); color: #ffd5d5; font-size: 14px; display: none; align-items: center; gap: 10px; }
 #offline.on { display: flex; animation: pop .3s var(--ease); }
 #offline .spinner { --size: 18px; color: var(--error); }
+/* where the card reader is: the PN532 flips out beside the screen (ui.reader_side).
+   While the screen waits for a card, that edge glows and arrows point at it. */
+#reader { position: fixed; top: 0; bottom: 0; width: 230px; z-index: 4; pointer-events: none;
+  display: none; align-items: center; left: 0; }
+body[data-reader="right"] #reader { left: auto; right: 0; transform: scaleX(-1); }
+body:is(.idle, .scanning):not(.boxed):not([data-reader="off"]) #reader { display: flex; animation: fade .6s var(--ease); }
+#reader .edge { position: absolute; left: 0; top: 50%; width: 5px; height: 300px; margin-top: -150px; border-radius: 0 6px 6px 0;
+  background: linear-gradient(transparent, var(--accent) 30%, var(--accent) 70%, transparent);
+  box-shadow: 0 0 18px 2px color-mix(in srgb, var(--accent) 70%, transparent); animation: edge 2.4s ease-in-out infinite; }
+#reader .wash { position: absolute; left: 0; top: 50%; width: 230px; height: 420px; margin-top: -210px;
+  background: radial-gradient(230px 210px at 0 50%, color-mix(in srgb, var(--accent) 20%, transparent), transparent);
+  animation: edge 2.4s ease-in-out infinite; }
+@keyframes edge { 50% { opacity: .45; } }
+#reader .arrows { position: relative; display: flex; gap: 2px; margin-left: 26px; color: var(--accent); }
+#reader .arrows svg { animation: nudge 1.6s var(--ease) infinite; opacity: .2; }
+#reader .arrows svg:nth-child(1) { animation-delay: .4s; }
+#reader .arrows svg:nth-child(2) { animation-delay: .2s; }
+@keyframes nudge { 0% { opacity: .2; transform: translateX(8px); } 30% { opacity: 1; transform: none; }
+                   70%, 100% { opacity: .2; transform: translateX(-6px); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -357,6 +376,7 @@ body.boxed #veil { display: grid; animation: fade .2s; }
   </aside>
   <div id="veil"></div>
 </main>
+<div id="reader" aria-hidden="true"><i class="edge"></i><i class="wash"></i><div class="arrows"><svg width="34" height="56" viewBox="0 0 24 40" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6 5 20l12 14"/></svg><svg width="34" height="56" viewBox="0 0 24 40" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6 5 20l12 14"/></svg><svg width="34" height="56" viewBox="0 0 24 40" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6 5 20l12 14"/></svg></div></div>
 <div id="kbd"></div>
 <div id="hold"><i></i></div>
 <div id="toasts"></div>
@@ -563,6 +583,7 @@ function showScreen(s) {
   drawBar(s);
   const mode = s.keyboard || null;
   body.classList.toggle("idle", s.view === "idle");
+  body.classList.toggle("scanning", s.view === "scan");
   body.classList.toggle("railed", !!s.nav);
   body.classList.toggle("padded", mode === "id" || mode === "numpad");
   body.classList.toggle("typing", mode === "name" || mode === "text");
@@ -836,6 +857,7 @@ function pressKey(key) {
 let tab = "here", listSig = null;
 function renderSide() {
   if (!side) return;
+  document.body.dataset.reader = side.reader_side || "left";
   $("tab-here").textContent = `Here now · ${side.here.length}`;
   $("tab-here").classList.toggle("on", tab === "here");
   $("tab-board").classList.toggle("on", tab === "board");
