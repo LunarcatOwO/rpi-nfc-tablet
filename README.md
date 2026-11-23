@@ -86,7 +86,7 @@ when everyone still signed in is signed out, each either counting their hours up
 to then or not), and sign-in blocks (times on chosen days when nobody can sign
 in, e.g. during class; signing out still works, and admins can still sign
 people in). **System**: info,
-updates, Wi-Fi, admin PIN, restart/close/minimize the app, restart/shut down the
+updates, Wi-Fi (open, WPA/WPA2/WPA3 and enterprise networks like eduroam), admin PIN, restart/close/minimize the app, restart/shut down the
 Pi. The side list jumps between them. Only admins can enroll cards, and anything
 that can't be undone asks "are you sure?" first.
 
