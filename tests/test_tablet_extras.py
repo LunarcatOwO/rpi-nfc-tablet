@@ -237,3 +237,61 @@ def test_overnight_block():
     assert night.covers(datetime(2026, 9, 5, 5, 59))             # Sat 05:59
     assert not night.covers(datetime(2026, 9, 5, 6, 0))
     assert not night.covers(datetime(2026, 9, 5, 23, 0))         # Saturday night isn't on
+
+
+def test_delete_someone_from_their_page(services, db, clock):
+    controller, users, *_ = make(services)
+    jo = users.add("Jo Park", "C")
+    users.add("Kim Lee", "C")
+    users.enroll_tag("04JO", jo["id"])
+    controller.handle_card("04JO")                               # signed in, then out
+    clock.advance(hours=2)
+    controller.handle_card("04JO")
+    controller.attendance.adjust(jo["id"], 600, "test")
+    press(controller, "*2468#18")
+    type_text(controller, "jo")
+    screen = press(controller, "1")
+    assert "8  Delete" in screen.lines
+    screen = press(controller, "8")
+    assert screen.title == "Delete Jo Park for good?" and screen.tone == "error"
+    assert screen.view == "dialog"
+    assert press(controller, "X").title == "Jo Park"            # cancel: their page again
+    press(controller, "8")
+    screen = press(controller, "#")
+    assert screen.title == "Jo Park deleted"
+    with db.transaction() as cur:
+        assert repo.get_user(cur, jo["id"]) is None
+        for table in ("tags", "sessions", "adjustments"):
+            cur.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE user_id = %s", (jo["id"],))
+            assert cur.fetchone()["n"] == 0
+    assert users.get_by_code("C002")["username"] == "Kim Lee"   # others untouched
+    clock.advance(minutes=1)
+    assert controller.handle_card("04JO").title != "Welcome, Jo Park!"   # card is free
+    assert users.add("New Person", "C")["code"] == "C001"   # the freed ID is reused
+
+
+def test_delete_works_on_a_deactivated_person(services):
+    controller, users, *_ = make(services)
+    users.add("Robin Alder", "B")
+    users.set_active("B001", False)
+    press(controller, "*2468#18")
+    type_text(controller, "rob")
+    press(controller, "1")
+    press(controller, "8")
+    assert press(controller, "#").title == "Robin Alder deleted"
+    assert users.list(include_inactive=True) == []
+
+
+def test_cli_delete_asks_to_type_delete(services, monkeypatch, capsys):
+    from argparse import Namespace
+
+    from nfc_login.admin import cli
+    attendance, seasons, users = services
+    users.add("Drew Hale", "A")
+    s = Namespace(users=users)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "no")
+    cli.cmd_user_delete(s, Namespace(code="A001", yes=False), None)
+    assert users.get_by_code("A001")
+    monkeypatch.setattr("builtins.input", lambda _prompt: "DELETE")
+    cli.cmd_user_delete(s, Namespace(code="A001", yes=False), None)
+    assert users.list(include_inactive=True) == []

@@ -953,6 +953,8 @@ class KioskController:
             ], "success")
         if action == "toggle_active":
             return self._toggle_active(ctx["user"])
+        if action == "delete_user":
+            return self._delete_user(ctx["user"])
         if action == "close_app":
             self._reset()
             return Screen("Closing the kiosk", [self.reopen_hint], "warning", close_app=True)
@@ -983,6 +985,18 @@ class KioskController:
         return self._result(f"{user['username']} reactivated",
                             [f"{user['code']} and their cards work again."], "success",
                             refresh=True)
+
+    def _delete_user(self, user: dict) -> Screen:
+        """Erase someone (their page > Delete), after the red confirm."""
+        self._reset()
+        try:
+            self.users.delete(user["id"])
+        except UserError as exc:
+            return self._result("Not deleted", [str(exc)], "error")
+        return self._result(f"{user['username']} deleted", [
+            f"{user['code']}, their cards and their hours are gone.",
+            f"The ID {user['code']} can be given to someone new.",
+        ], "success", refresh=True)
 
     def _admin_toggle(self, user: dict) -> Screen:
         """Hours > Sign someone in or out."""
@@ -1235,9 +1249,14 @@ class KioskController:
         """An action on someone's page: straight to its next step, no ID to type."""
         purpose = {"1": MOVE_ID, "2": RENAME_ID, "3": ENROLL_ID, "4": UNCARD_ID,
                    "5": ACTIVE_ID, "6": ADJUST_ID, "7": TOGGLE_ID}.get(key)
+        query = self.context.get("query", "")
+        if key == "8":   # Delete: works on deactivated people too
+            user = self.context["user"]
+            self._confirm("delete_user", PEOPLE_MENU, user=user, from_person=True)
+            self.context["query"] = query
+            return self._redraw()
         if purpose is None:
             return None
-        query = self.context.get("query", "")
         screen = self._use_user(self.context["user"], purpose, from_person=True)
         if self.state != IDLE:          # (signing in or out finishes straight away)
             self.context["query"] = query   # for back, through the action, to the search
@@ -1679,7 +1698,7 @@ class KioskController:
             return Screen(user["username"], [
                 "1  Change team", "2  Rename", "3  Enroll a card",
                 f"4  Remove cards ({cards})", switch, "6  Add / subtract hours",
-                f"7  Sign {'out' if stats.signed_in else 'in'}",
+                f"7  Sign {'out' if stats.signed_in else 'in'}", "8  Delete",
             ], "prompt", stats=_stats(stats) + [("Cards", str(cards))],
                 person={"name": user["username"], "team": user["section"],
                         "sub": f"{user['code']}  ·  {team}  ·  {now}"})
@@ -1862,6 +1881,12 @@ class KioskController:
             return Screen(f"Reactivate {user['username']}?", [
                 f"{user['code']} and their cards work again.",
                 "", "*  Cancel      #  Reactivate"], "prompt")
+        if action == "delete_user":
+            user = ctx["user"]
+            return Screen(f"Delete {user['username']} for good?", [
+                "Their ID, cards and hours in every season are erased.",
+                "This can't be undone. To keep their hours, deactivate them instead.",
+                "", "*  Cancel      #  Delete"], "error")
         title, lines = {
             "restart_app": ("Restart the kiosk app?", ["It's back in a few seconds."]),
             "close_app": ("Close the kiosk app?", [
