@@ -40,6 +40,7 @@ from nfc_login.services import timefmt
 log = logging.getLogger(__name__)
 
 PAGE = Path(__file__).with_name("kiosk.html")
+SOUNDS = Path(__file__).with_name("sounds")   # sign-in, error... wav files the page plays
 KEYS = set("0123456789*#?~ABCDEFGHIJKLMNOPQRSTUVWXYZ")  # every key a button can send (X = back)
 RESTART_DELAY_SECONDS = 2.5      # time to read "Restarting..." first
 
@@ -291,6 +292,8 @@ def make_handler(kiosk: WebKiosk):
                 self._json(kiosk.side_data())
             elif path == "/events":
                 self._events()
+            elif path.startswith("/sounds/") and path[8:] in {f.name for f in SOUNDS.glob("*.wav")}:
+                self._send((SOUNDS / path[8:]).read_bytes(), "audio/wav")
             else:
                 self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 

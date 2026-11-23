@@ -31,7 +31,8 @@ How each part works is explained in comments in the code itself, starting from
 PN532 pin numbers are the Pi's physical pin numbers. Sounds (sign in, sign out,
 errors) come out of the screen's speakers over HDMI. If they're silent, pick the
 HDMI output from the speaker icon on the Pi's desktop, and turn them off with
-`sounds = false` in `config.toml` if you'd rather have quiet.
+`sounds = false` in `config.toml` if you'd rather have quiet. The sounds are short
+wooden knocks in `nfc_login/ui/sounds/`, made by `scripts/make_sounds.py`.
 
 If the picture doesn't fill the screen, add `video=HDMI-A-1:1024x600@60` to the
 end of the line in `/boot/firmware/cmdline.txt` and reboot.

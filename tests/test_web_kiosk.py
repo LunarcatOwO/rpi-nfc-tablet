@@ -184,3 +184,13 @@ def test_popups_leave_the_screen_alone(kiosk):
     assert q.get(timeout=3)["type"] == "refresh"
     assert kiosk.current() == before                        # still the same screen
     assert {"~", "?"} <= KEYS                               # Leaderboard and Search buttons
+
+
+def test_sound_files_are_served(kiosk):
+    _kiosk, _users, base = kiosk
+    with urllib.request.urlopen(base + "/sounds/sign_in.wav") as r:
+        assert r.headers["Content-Type"] == "audio/wav" and r.read(4) == b"RIFF"
+    for bad in ("/sounds/nope.wav", "/sounds/../kiosk.html", "/sounds/%2e%2e/web_kiosk.py"):
+        with pytest.raises(urllib.error.HTTPError) as err:
+            urllib.request.urlopen(base + bad)
+        assert err.value.code == 404
