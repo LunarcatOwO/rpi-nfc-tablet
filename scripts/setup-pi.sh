@@ -30,7 +30,7 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-ELECTRON_VERSION="44.5.1"          # keep in step with electron/package-lock.json
+ELECTRON_VERSION="45.4.1"          # keep in step with electron/package-lock.json
 APP_DIR="$HOME/.local/share/nfc-kiosk"
 DEB=""                             # optional .deb to install
 ASK_PIN=1
