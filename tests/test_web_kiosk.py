@@ -196,6 +196,16 @@ def test_sound_files_are_served(kiosk):
         assert err.value.code == 404
 
 
+def test_font_files_are_served(kiosk):
+    _kiosk, _users, base = kiosk
+    with urllib.request.urlopen(base + "/fonts/roboto-latin.woff2") as r:
+        assert r.headers["Content-Type"] == "font/woff2" and r.read(4) == b"wOF2"
+    for bad in ("/fonts/nope.woff2", "/fonts/OFL.txt", "/fonts/../kiosk.html"):
+        with pytest.raises(urllib.error.HTTPError) as err:
+            urllib.request.urlopen(base + bad)
+        assert err.value.code == 404
+
+
 def test_reader_side_falls_back_to_left():
     from nfc_login.ui.web_kiosk import reader_side
     assert reader_side("Right ") == "right" and reader_side("off") == "off"
