@@ -167,6 +167,10 @@ p { margin: 0; }
   transition: background-color .12s; }
 .item:active { background: var(--key); }
 .item span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.item small { display: block; font-size: 14px; font-weight: 400; color: var(--muted); margin-top: 3px; }
+.item .ii { flex: none; width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center;
+  background: linear-gradient(140deg, color-mix(in srgb, var(--ic) 22%, transparent), color-mix(in srgb, var(--ic) 5%, transparent));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
 
 /* admin home: three tiles */
 .tiles { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin: 24px;
@@ -310,6 +314,8 @@ body.boxed #veil { display: grid; animation: fade .2s; }
 .dialog .btn.primary { flex: 2; }
 .dialog .text { font-size: 18px; }
 .person { display: flex; align-items: center; gap: 20px; }
+.person .stat b { font-size: 22px; white-space: nowrap; }
+.person .stat span { font: 400 14px var(--sans); }
 .person .av { width: 80px; height: 80px; font-size: 34px; border-radius: 18px; }
 .person b { font-size: 32px; font-weight: 600; letter-spacing: -.015em; display: block; }
 .person div span { font: 400 16px var(--mono); color: var(--muted); }
@@ -474,6 +480,28 @@ const ICONS = {
   trophy: '<path d="M15 8h18v10a9 9 0 0 1-18 0zM15 12H8a6 6 0 0 0 7 8M33 12h7a6 6 0 0 1-7 8M24 27v7M16 41h16l-2-7H18z"/>',
   search: '<circle cx="21" cy="21" r="12"/><path d="M30 30l11 11"/>',
   timer: '<circle cx="24" cy="27" r="16"/><path d="M24 18v9l5 4M19 5h10"/>',
+  // admin menu items
+  useradd: '<circle cx="18" cy="15" r="8"/><path d="M4 41a14 14 0 0 1 28 0M38 16v12M32 22h12"/>',
+  idcard: '<rect x="4" y="10" width="40" height="28" rx="4"/><path d="M4 19h40M12 30h10"/>',
+  cardx: '<rect x="4" y="10" width="40" height="28" rx="4"/><path d="M18 18l12 12M30 18 18 30"/>',
+  swap: '<path d="M32 6l8 8-8 8M40 14H8M16 42l-8-8 8-8M8 34h32"/>',
+  pen: '<path d="M24 40h18M33 7a4.2 4.2 0 0 1 6 6L14 38l-8 2 2-8z"/>',
+  ban: '<circle cx="24" cy="24" r="18"/><path d="M11 11l26 26"/>',
+  list: '<path d="M6 12h36M6 24h36M6 36h24"/>',
+  plusminus: '<path d="M14 6v16M6 14h16M28 36h14"/><path d="M38 8 10 40"/>',
+  inout: '<path d="M20 6h16a4 4 0 0 1 4 4v28a4 4 0 0 1-4 4H20M6 24h24M22 16l8 8-8 8"/>',
+  outall: '<path d="M28 6H12a4 4 0 0 0-4 4v28a4 4 0 0 0 4 4h16M42 24H18M34 16l8 8-8 8"/>',
+  flag: '<path d="M8 44V6M8 8h28l-6 9 6 9H8"/>',
+  history: '<path d="M6 24a18 18 0 1 0 5-12.5M6 6v8h8M24 14v10l7 4"/>',
+  calx: '<rect x="6" y="9" width="36" height="33" rx="4"/><path d="M6 19h36M16 5v8M32 5v8M19 26l10 10M29 26 19 36"/>',
+  info: '<circle cx="24" cy="24" r="18"/><path d="M24 22v12M24 15h.01"/>',
+  download: '<path d="M24 6v24M14 20l10 10 10-10M8 40h32"/>',
+  wifi: '<path d="M4 18a30 30 0 0 1 40 0M10 25a21 21 0 0 1 28 0M17 32a11 11 0 0 1 14 0M24 39h.01"/>',
+  key: '<circle cx="15" cy="33" r="9"/><path d="M21 27 40 8M33 15l5 5M28 20l4 4"/>',
+  reload: '<path d="M40 24a16 16 0 1 1-5-11.6M40 6v9h-9"/>',
+  closex: '<rect x="6" y="6" width="36" height="36" rx="6"/><path d="M18 18l12 12M30 18 18 30"/>',
+  power: '<path d="M24 6v16M14 12a16 16 0 1 0 20 0"/>',
+  minimize: '<rect x="6" y="6" width="36" height="36" rx="6"/><path d="M16 32h16"/>',
 };
 function icon(name, size, color, width = 2.4) {
   const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -577,9 +605,55 @@ function keyIcon(k, opts) {
   const name = k === "#" ? opts.icon : { "~": "trophy", "?": "search" }[k];
   return name ? icon(name, 24) : null;
 }
-function itemList(items, cols) {
-  return h("div.items", { style: `--cols: ${cols}` }, items.map(([k, label]) =>
-    h("button.item", { on: () => sendKey(k) }, h("span", {}, label), icon("chev", 20, "#64748b"))));
+// Admin menu items get a coloured icon and a short line under the label, matched on
+// the label's start. Anything not listed (seasons, Wi-Fi networks...) stays plain text.
+const ITEM_LOOK = [
+  // People
+  ["Add a person", "useradd", "info", "Create an ID and name"],
+  ["Enroll a card", "idcard", "success", "Link a card to someone"],
+  ["Remove someone's cards", "cardx", "error", "Unlink lost cards"],
+  ["Remove cards", "cardx", "error"],
+  ["Change someone's team", "swap", "warning", "Gives them a new ID"],
+  ["Change team", "swap", "warning"],
+  ["Rename", "pen", "prompt", "Fix a name"],
+  ["Deactivated people", "list", "muted", "See who is hidden"],
+  ["Deactivate / reactivate", "ban", "muted", "Hide someone, keep their hours"],
+  ["Deactivate", "ban", "muted"], ["Reactivate", "ban", "muted"],
+  ["Find someone by name", "search", "info", "Open a person's page"],
+  // Hours
+  ["Add / subtract hours", "plusminus", "success", "Fix someone's time"],
+  ["Sign someone in or out", "inout", "info", "Without their card"],
+  ["Sign in", "inout", "info"], ["Sign out", "outall", "info"],
+  ["Who is here", "people", "success", "Everyone signed in now"],
+  ["Sign everyone out", "outall", "warning", "Credits their time"],
+  ["Start a new season", "flag", "error", "Hours back to zero, people stay"],
+  ["Past seasons", "history", "prompt", "Rankings from old seasons"],
+  ["Scheduled sign-out", "timer", "info", "Sign everyone out at set times"],
+  ["Sign-in blocks", "calx", "warning", "Times when sign-in is closed"],
+  // System
+  ["System info", "info", "info", "Version, network, reader"],
+  ["Check for updates", "reload", "success", "Look for a new version"],
+  ["Install update", "download", "success", "Download it and restart"],
+  ["Wi-Fi", "wifi", "info", "Pick a network"],
+  ["Change the admin PIN", "key", "warning", "Set a new PIN"],
+  ["Restart the kiosk app", "reload", "prompt", "Reload this screen"],
+  ["Close the kiosk app", "closex", "muted", "Back to the desktop"],
+  ["Restart the Pi", "power", "warning", "Reboot the whole tablet"],
+  ["Shut down the Pi", "power", "error", "Safe to unplug after"],
+  ["Minimize the kiosk app", "minimize", "muted", "Card scans keep counting"],
+];
+function itemLook(label) {
+  return ITEM_LOOK.find(([start]) => label.startsWith(start));
+}
+function itemList(items, cols, subs = true) {
+  return h("div.items", { style: `--cols: ${cols}` }, items.map(([k, label]) => {
+    const look = itemLook(label);
+    const color = look && `var(--${look[2]})`;
+    return h("button.item", { on: () => sendKey(k) },
+      look ? h("span.ii", { style: `--ic: ${color}` }, icon(look[1], 22, color, 3)) : null,
+      h("span", {}, label, subs && look && look[3] ? h("small", {}, look[3]) : null),
+      icon("chev", 20, "#64748b"));
+  }));
 }
 function textP(line, cls = "") {
   return line.trim() ? h(`p.text${cls}`, {}, line) : h("p.text.gap");
@@ -700,7 +774,7 @@ function drawPerson(s) {
     h("div.person", {}, h("span.av", { style: `background: ${teamColor(p.team)}` }, p.name[0] || "?"),
       h("div", { style: "flex: 1; min-width: 0" }, h("b", {}, p.name), h("span", {}, p.sub)),
       statCards(s.stats)),
-    bl.filter(b => b.items).map(b => itemList(b.items, 2)));
+    bl.filter(b => b.items).map(b => itemList(b.items, 2, false)));
 }
 // "Tap your card" -> "Tap your " + <em>card</em> (the last word in blue)
 function accentLast(title) {
