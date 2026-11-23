@@ -92,7 +92,6 @@ p { margin: 0; }
 .bigclock b { display: block; font-size: 72px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
 .bigclock span { display: block; font-size: 18px; color: var(--muted); margin-top: 8px; }
 .hero.idle { gap: 18px; }
-.hero.idle .ring { width: 130px; height: 130px; box-shadow: 0 0 0 12px color-mix(in srgb, var(--accent) 5%, transparent); animation: none; }
 .hero.idle h1 { font-size: 34px; }
 
 /* result: welcome / goodbye / done / errors */
@@ -657,13 +656,12 @@ function drawIdle(s) {
   const bl = blocks(s.lines);
   return h("div.hero.idle", {},
     h("div.bigclock", {}, h("b", { "data-clock": "time" }, clockText()), h("span", { "data-clock": "date" }, dateText())),
-    h("div.ring", {}, icon("card", 70, "var(--accent)")),
     h("h1", {}, s.title),
     bl.map(b => b.text !== undefined ? textP(b.text)
       : actButtons(b.acts, { icon: "pad", plain: true })));
 }
 function drawScan(s) {
-  return h("div.hero", {}, h("div.ring", {}, icon("card", 96, "var(--accent)")), h("h1", {}, s.title),
+  return h("div.hero", {}, h("h1", {}, s.title),
            drawBlocks(s.lines));
 }
 function drawResult(s) {
