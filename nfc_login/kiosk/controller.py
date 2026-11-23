@@ -53,7 +53,7 @@ from nfc_login.services.system import (EAP_METHODS, EnterpriseLogin, SystemActio
 from nfc_login.services.blocks import MAX_BLOCKS, Block, days_text
 from nfc_login.services.schedule import ScheduleError, parse_time
 from nfc_login.services.updates import UpdateError
-from nfc_login.services.users import UserError, UserService
+from nfc_login.services.users import IdTaken, UserError, UserService
 from nfc_login.tags.payload import TagTooSmall, build_message
 
 log = logging.getLogger(__name__)
@@ -88,6 +88,7 @@ RENAME_NAME = "rename_name"
 ACTIVE_ID = "active_id"       # whom to deactivate / reactivate
 NAME_SEARCH = "name_search"   # admin: find someone by name, for context["for"]
 PERSON = "person"             # admin: one person's page, with everything to change
+NEW_CODE = "new_code"         # their page > Change ID: typing the new ID
 # Hours
 ADJUST_ID = "adjust_id"
 ADJUST_AMOUNT = "adjust_amount"
@@ -116,7 +117,7 @@ ADMINPIN_AGAIN = "adminpin_again"
 CONFIRM = "confirm"           # "are you sure?" for the action in context["action"]
 
 ID_STATES = (USER_ID, ENROLL_ID, ADJUST_ID, MOVE_ID, UNCARD_ID, RENAME_ID, ACTIVE_ID,
-             TOGGLE_ID)
+             TOGGLE_ID, NEW_CODE)
 PIN_STATES = (ADMIN_PIN, ADMINPIN_NEW, ADMINPIN_AGAIN, SEASON_PIN, ADMINPIN_OLD)
 NAME_STATES = (NEW_NAME, RENAME_NAME)
 TEXT_STATES = (*NAME_STATES, WIFI_PASSWORD, WIFI_FIELD, NAME_SEARCH, BOARD_SEARCH)
@@ -124,7 +125,7 @@ TEXT_STATES = (*NAME_STATES, WIFI_PASSWORD, WIFI_FIELD, NAME_SEARCH, BOARD_SEARC
 # (admin, the leaderboard) it shows a pop-up and the screen stays as it was.
 FULL_SCREEN_SCANS = (IDLE, USER_ID, USER_MENU, ENROLL_SCAN)
 # The steps an action on someone's page can lead to: back from them returns there.
-AFTER_PERSON = (PICK_TEAM, RENAME_NAME, ADJUST_AMOUNT, ENROLL_SCAN, CONFIRM)
+AFTER_PERSON = (PICK_TEAM, RENAME_NAME, ADJUST_AMOUNT, ENROLL_SCAN, CONFIRM, NEW_CODE)
 
 # Where * goes from an empty entry.
 BACK = {
@@ -682,7 +683,7 @@ class KioskController:
 
     def _id_key(self, key: str) -> Screen | None:
         """A key while typing an ID; submits by itself once it's complete."""
-        if key == "?" and self.state != USER_ID:   # admin: find them by name instead
+        if key == "?" and self.state not in (USER_ID, NEW_CODE):   # admin: find them by name instead
             return self._go(NAME_SEARCH, {"for": self.state})
         if key in self.section_keys and self.buffer:
             # Another team tapped: swap the letter, keep the digits typed so far.
@@ -708,6 +709,8 @@ class KioskController:
     def _submit_id(self) -> Screen:
         """An ID was typed: look the user up, then go on to whatever needed it."""
         code, self.buffer = self.buffer, ""
+        if self.state == NEW_CODE:
+            return self._new_code_typed(code)
         try:
             user = self.users.get_by_code(code)
         except UserError as exc:
@@ -967,6 +970,8 @@ class KioskController:
             return self._toggle_active(ctx["user"])
         if action == "delete_user":
             return self._delete_user(ctx["user"])
+        if action == "change_code":
+            return self._change_code(ctx["user"], ctx["code"], ctx["other"])
         if action == "close_app":
             self._reset()
             return Screen("Closing the kiosk", [self.reopen_hint], "warning", close_app=True)
@@ -1009,6 +1014,46 @@ class KioskController:
             f"{user['code']}, their cards and their hours are gone.",
             f"The ID {user['code']} can be given to someone new.",
         ], "success", refresh=True)
+
+    def _new_code_typed(self, code: str) -> Screen:
+        """Their page > Change ID: a new ID was typed. Ask first, offering a swap if it's taken."""
+        user = self.context["user"]
+        try:
+            section, number = ids.parse_code(code)
+            other = self.users.code_owner(code)
+        except (ValueError, UserError) as exc:
+            return self._error_keep_state(str(exc))
+        code = ids.format_code(section, number)
+        if other and other["id"] == user["id"]:
+            return self._error_keep_state(f"{user['username']} already has {code}.")
+        query = self.context.get("query", "")
+        self._confirm("change_code", PEOPLE_MENU, user=user, code=code, section=section,
+                      other=other, from_person=True)
+        self.context["query"] = query
+        return self._redraw()
+
+    def _change_code(self, user: dict, code: str, other: dict | None) -> Screen:
+        """Give someone the new ID (or swap with whoever has it), after the confirm."""
+        query = self.context.get("query", "")
+        try:
+            done = self.users.change_code(user["id"], code, swap=other is not None)
+        except IdTaken as exc:   # someone got that ID since the confirm came up: ask again
+            self._confirm("change_code", PEOPLE_MENU, user=user, code=code,
+                          section=exc.other["section"], other=exc.other, from_person=True)
+            self.context["query"] = query
+            return self._error_keep_state("Someone else just got that ID.")
+        except UserError as exc:
+            self._reset()
+            return self._result("ID not changed", [str(exc)], "error")
+        self._reset()
+        new, swapped = done["user"], done["other"]
+        lines = [f"{new['username']} is now {new['code']} ({self.users.team_name(new['section'])})."]
+        if swapped:
+            lines.append(f"{swapped['username']} is now {swapped['code']} "
+                         f"({self.users.team_name(swapped['section'])}).")
+        lines.append("Cards and hours stayed with each person.")
+        return self._result("IDs swapped" if swapped else "ID changed", lines, "success",
+                            refresh=True)
 
     def _admin_toggle(self, user: dict) -> Screen:
         """Hours > Sign someone in or out."""
@@ -1273,6 +1318,9 @@ class KioskController:
             self._confirm("delete_user", PEOPLE_MENU, user=user, from_person=True)
             self.context["query"] = query
             return self._redraw()
+        if key == "9":   # Change ID (deactivated people too)
+            return self._go(NEW_CODE, {"user": self.context["user"], "from_person": True,
+                                       "query": query})
         if purpose is None:
             return None
         screen = self._use_user(self.context["user"], purpose, from_person=True)
@@ -1774,6 +1822,7 @@ class KioskController:
                 "1  Change team", "2  Rename", "3  Enroll a card",
                 f"4  Remove cards ({cards})", switch, "6  Add / subtract hours",
                 f"7  Sign {'out' if stats.signed_in else 'in'}", "8  Delete",
+                "9  Change ID",
             ], "prompt", stats=_stats(stats) + [("Cards", str(cards))],
                 person={"name": user["username"], "team": user["section"],
                         "sub": f"{user['code']}  ·  {team}  ·  {now}"})
@@ -1898,6 +1947,16 @@ class KioskController:
             return Screen("Tap the new card",
                           [f"Hold it on the reader to enroll it for {user['username']} "
                            f"({user['code']}).", "*  Cancel"], "prompt")
+        if state == NEW_CODE:
+            user = ctx["user"]
+            length = ids.code_length(self.buffer) if self.buffer else ids.DIGITS + 1
+            shown = self.buffer + "_" * (length - len(self.buffer))
+            return Screen(f"New ID for {user['username']}", [
+                "Tap the team, then type the number.",
+                f"Now {user['code']} ({self.users.team_name(user['section'])}).",
+                "The letter is the team: a new letter moves them to that team.",
+                "If someone already has that ID, you can swap with them.",
+            ], "prompt", entry=shown, keyboard="id")
         if state in ID_STATES:
             title = {USER_ID: "Type your ID", ENROLL_ID: "Enroll a card: user ID",
                      ADJUST_ID: "Adjust hours: user ID", MOVE_ID: "Change team: user ID",
@@ -1983,6 +2042,21 @@ class KioskController:
             return Screen(f"Reactivate {user['username']}?", [
                 f"{user['code']} and their cards work again.",
                 "", "*  Cancel      #  Reactivate"], "prompt")
+        if action == "change_code":
+            user, code, other = ctx["user"], ctx["code"], ctx["other"]
+            team = self.users.team_name
+            if other:
+                return Screen(f"{code} belongs to {other['username']}. Swap IDs?", [
+                    f"{user['username']} becomes {code} ({team(ctx['section'])}).",
+                    f"{other['username']} becomes {user['code']} ({team(user['section'])}).",
+                    "Cards and hours stay with each person. Teams follow the new IDs.",
+                    "", "*  Cancel      #  Swap IDs"], "warning")
+            lines = [(f"Now {user['code']} ({team(user['section'])}). "
+                      "Their cards and hours stay with them.")]
+            if ctx["section"] != user["section"]:
+                lines.append(f"This also moves them to {team(ctx['section'])}.")
+            return Screen(f"Give {user['username']} the ID {code}?", [
+                *lines, "", "*  Cancel      #  Change ID"], "prompt")
         if action == "delete_user":
             user = ctx["user"]
             return Screen(f"Delete {user['username']} for good?", [

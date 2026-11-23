@@ -138,6 +138,19 @@ def cmd_user_move(s, args, config):
     print(f"{user['username']} is now {user['code']}.")
 
 
+def cmd_user_change_id(s, args, config):
+    user = s.users.get_by_code(args.code)
+    other = s.users.code_owner(args.new_code)
+    if other and other["id"] != user["id"] and not args.swap:
+        print(f"{other['code']} belongs to {other['username']}. Add --swap to trade IDs "
+              "(and teams) with them.")
+        return
+    done = s.users.change_code(user["id"], args.new_code, swap=args.swap)
+    print(f"{done['user']['username']} is now {done['user']['code']}.")
+    if done["other"]:
+        print(f"{done['other']['username']} is now {done['other']['code']}.")
+
+
 def cmd_user_deactivate(s, args, config):
     s.users.set_active(args.code, False)
     print("User deactivated (history kept, hidden from leaderboard, cards stop working).")
@@ -400,6 +413,12 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("code", help="user ID, e.g. A007 (or 007 for a mentor)")
     c.add_argument("username")
     c.set_defaults(func=cmd_user_rename)
+    c = user.add_parser("change-id", help="give a user a new ID (its letter sets the team)")
+    c.add_argument("code", help="their ID now, e.g. A007")
+    c.add_argument("new_code", help="the new ID, e.g. B012 (or 012 for a mentor)")
+    c.add_argument("--swap", action="store_true",
+                   help="if someone has the new ID, trade IDs with them")
+    c.set_defaults(func=cmd_user_change_id)
     c = user.add_parser("move", help="put a user in another team (gives a new ID)")
     c.add_argument("code", help="user ID, e.g. U03")
     c.add_argument("section", help="team letter, e.g. B (M for mentors)")

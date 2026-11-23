@@ -486,6 +486,7 @@ const ICONS = {
   cardx: '<rect x="4" y="10" width="40" height="28" rx="4"/><path d="M18 18l12 12M30 18 18 30"/>',
   swap: '<path d="M32 6l8 8-8 8M40 14H8M16 42l-8-8 8-8M8 34h32"/>',
   pen: '<path d="M24 40h18M33 7a4.2 4.2 0 0 1 6 6L14 38l-8 2 2-8z"/>',
+  idswap: '<rect x="4" y="14" width="24" height="20" rx="3"/><path d="M10 24h12M32 12h12M40 8l4 4-4 4M44 36H32M36 32l-4 4 4 4"/>',
   trash: '<path d="M6 12h36M18 12V7h12v5M10 12l2.5 28a3 3 0 0 0 3 2.8h17a3 3 0 0 0 3-2.8L38 12M20 20v15M28 20v15"/>',
   ban: '<circle cx="24" cy="24" r="18"/><path d="M11 11l26 26"/>',
   list: '<path d="M6 12h36M6 24h36M6 36h24"/>',
@@ -621,6 +622,7 @@ const ITEM_LOOK = [
   ["Deactivate / reactivate", "ban", "muted", "Hide someone, keep their hours"],
   ["Deactivate", "ban", "muted"], ["Reactivate", "ban", "muted"],
   ["Delete", "trash", "error", "Erase them, their cards and hours"],
+  ["Change ID", "idswap", "info", "New ID, or swap with someone"],
   ["Find someone by name", "search", "info", "Open a person's page"],
   // Hours
   ["Add / subtract hours", "plusminus", "success", "Fix someone's time"],
@@ -840,6 +842,9 @@ function drawId(s) {
   const note = team ? `${team.name}\n${left} more digit${left === 1 ? "" : "s"}` : "Tap your team,\nthen your number";
   const keys = side ? side.keys : [];
   const bl = blocks(s.lines);
+  // Text after the usual "tap the team" line is extra help for this screen (Change ID).
+  const texts = bl.filter(b => b.text !== undefined && b.text.trim()).map(b => b.text);
+  const extra = texts.slice(s.tone === "error" ? 2 : 1);
   return h("div.page", {},
     s.tone === "error" && bl[0] && bl[0].text ? textP(bl[0].text, ".err") : null,
     h("div.entry", {}, code, h("div.note", { style: "white-space: pre-line" }, note)),
@@ -847,8 +852,9 @@ function drawId(s) {
     h("div.tbtns", {}, keys.map(t => h(`button.tbtn${t.letter === letter ? ".on" : ""}`,
       { style: `--tc: ${teamColor(t.letter)}`, on: () => sendKey(t.key) },
       h("span.tl", { style: `background: ${teamColor(t.letter)}` }), t.name))),
+    extra.map(t => h("div.hint", { style: "margin-top: 10px" }, t)),
     bl.filter(b => b.acts).map(b => h("div", { style: "margin-top: auto" }, actButtons(b.acts, { plain: true }))),
-    side && side.mentors && !bl.some(b => b.acts) ? h("div.hint", { style: "margin-top: auto" },
+    side && side.mentors && !bl.some(b => b.acts) && !extra.length ? h("div.hint", { style: "margin-top: auto" },
       "Mentors and captains: just type your number.") : null);
 }
 // PINs (dots) and hour amounts (text), with the number pad beside.

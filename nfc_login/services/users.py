@@ -38,6 +38,14 @@ class UserError(Exception):
     """A problem to show to the admin (taken name, unknown ID, ...)."""
 
 
+class IdTaken(UserError):
+    """The ID asked for already belongs to someone (offer to swap)."""
+
+    def __init__(self, other: dict):
+        super().__init__(f"{other['code']} belongs to {other['username']}.")
+        self.other = other
+
+
 class UserService:
     """Adds, renames, deactivates and deletes people, and links NFC cards to them."""
 
@@ -103,6 +111,59 @@ class UserService:
             cur.execute("UPDATE users SET section = %s, number = %s WHERE id = %s",
                         (section, number, user_id))
             return repo.get_user(cur, user_id)
+
+    def code_owner(self, code: str) -> dict | None:
+        """Who has this ID right now (None if it's free). Bad IDs raise UserError."""
+        section, number = self._parse_new_code(code)
+        with self.db.transaction() as cur:
+            return repo.get_user_by_code(cur, section, number)
+
+    def _parse_new_code(self, code: str) -> tuple[str, int]:
+        """An ID an admin wants to give someone: a real team letter (or a mentor number)."""
+        try:
+            section, number = ids.parse_code(code)
+        except ValueError as exc:
+            raise UserError(str(exc)) from None
+        if section not in self.section_names:  # U (no team yet) or a letter with no team
+            if section == ids.MENTORS:
+                raise UserError("Mentor IDs (numbers only) aren't used on this kiosk.")
+            raise UserError(f"{section} isn't a team letter.")
+        return section, number
+
+    def change_code(self, user_id: int, code: str, swap: bool = False) -> dict:
+        """Give someone a new ID. Their cards and hours (every season) stay with them,
+        since those point at the person, not the ID. The letter is the team, so a new
+        letter moves them to that team.
+
+        If someone else has the ID, swap=True trades IDs (and so teams) between the
+        two, all in one transaction; otherwise IdTaken is raised.
+        Returns {"user": their new row, "other": the other person's new row or None}.
+        """
+        section, number = self._parse_new_code(code)
+        new_code = ids.format_code(section, number)
+        with self.db.transaction() as cur:
+            user = repo.get_user(cur, user_id, for_update=True)
+            if not user:
+                raise UserError("No user with that ID.")
+            if (user["section"], user["number"]) == (section, number):
+                raise UserError(f"{user['username']} already has {new_code}.")
+            cur.execute("SELECT * FROM users WHERE section = %s AND number = %s FOR UPDATE",
+                        (section, number))
+            other = ids.with_code(cur.fetchone())
+            if other and not swap:
+                raise IdTaken(other)
+            if other:
+                # (section, number) is UNIQUE, so park the other person on a number
+                # nobody can have (minus their row id) while the two IDs trade places.
+                cur.execute("UPDATE users SET number = %s WHERE id = %s",
+                            (-other["id"], other["id"]))
+            cur.execute("UPDATE users SET section = %s, number = %s WHERE id = %s",
+                        (section, number, user_id))
+            if other:
+                cur.execute("UPDATE users SET section = %s, number = %s WHERE id = %s",
+                            (user["section"], user["number"], other["id"]))
+            return {"user": repo.get_user(cur, user_id),
+                    "other": repo.get_user(cur, other["id"]) if other else None}
 
     def get(self, user_id: int) -> dict:
         """A user by internal id."""

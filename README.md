@@ -79,7 +79,7 @@ Admin has three parts. **People**: add, enroll cards, remove cards, change team,
 rename, deactivate, list deactivated, and find someone by name (their page has
 everything you can change about them, including people brought over from the
 old system who have no team yet, and **Delete**, which erases someone with
-their cards and hours in every season; deactivate keeps the hours). Every "user ID" screen also has **Search by
+their cards and hours in every season; deactivate keeps the hours), and **Change ID**, which gives them a new ID and keeps their cards and hours; the letter is the team, so a new letter moves them, and if someone already has that ID it offers to swap the two). Every "user ID" screen also has **Search by
 name**. **Hours**: add/subtract, sign someone in or out, who's here, sign
 everyone out, new season, past seasons, and scheduled sign-out (times each day
 when everyone still signed in is signed out, each either counting their hours up

@@ -15,10 +15,13 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
+
 from nfc_login.db import repository as repo
 from nfc_login.kiosk import controller as kc
 from nfc_login.services.clockguard import ClockGuard
 from nfc_login.services.schedule import AutoSignOut, ScheduleError, parse_time
+from nfc_login.services.users import IdTaken, UserError
 
 from tests.test_admin_menu import make, press
 
@@ -295,3 +298,88 @@ def test_cli_delete_asks_to_type_delete(services, monkeypatch, capsys):
     monkeypatch.setattr("builtins.input", lambda _prompt: "DELETE")
     cli.cmd_user_delete(s, Namespace(code="A001", yes=False), None)
     assert users.list(include_inactive=True) == []
+
+
+def test_change_id_to_a_free_one_keeps_cards_and_hours(services, db, clock):
+    controller, users, *_ = make(services)
+    jo = users.add("Jo Park", "C")
+    users.enroll_tag("04JO", jo["id"])
+    controller.handle_card("04JO")
+    clock.advance(hours=2)
+    controller.handle_card("04JO")
+    press(controller, "*2468#18")
+    type_text(controller, "jo")
+    press(controller, "1")
+    screen = press(controller, "9")
+    assert controller.state == kc.NEW_CODE and screen.keyboard == "id"
+    assert screen.title == "New ID for Jo Park"
+    screen = press(controller, "C001")                          # their own ID
+    assert screen.tone == "error" and "already has C001" in screen.lines[0]
+    screen = press(controller, "A012")
+    assert screen.title == "Give Jo Park the ID A012?" and screen.view == "dialog"
+    assert "This also moves them to Robot." in screen.lines
+    assert press(controller, "X").title == "Jo Park"            # cancel: their page again
+    press(controller, "9")
+    press(controller, "A012")
+    screen = press(controller, "#")
+    assert screen.title == "ID changed"
+    moved = users.get(jo["id"])
+    assert moved["code"] == "A012" and moved["section"] == "A"
+    clock.advance(minutes=1)
+    assert controller.handle_card("04JO").title == "Welcome, Jo Park!"   # card still theirs
+    assert services[0].user_stats(jo["id"]).total_seconds >= 2 * 3600    # hours too
+
+
+def test_change_id_to_a_taken_one_offers_a_swap(services, db):
+    controller, users, *_ = make(services)
+    jo = users.add("Jo Park", "C")                               # C001
+    kim = users.add("Kim Lee", "B")                              # B001
+    users.enroll_tag("04JO", jo["id"])
+    users.enroll_tag("04KI", kim["id"])
+    press(controller, "*2468#18")
+    type_text(controller, "jo")
+    press(controller, "1")
+    press(controller, "9")
+    screen = press(controller, "B001")
+    assert screen.title == "B001 belongs to Kim Lee. Swap IDs?"
+    assert "Jo Park becomes B001 (Impact)." in screen.lines
+    assert "Kim Lee becomes C001 (Sustainability)." in screen.lines
+    screen = press(controller, "#")
+    assert screen.title == "IDs swapped"
+    assert users.get(jo["id"])["code"] == "B001"
+    assert users.get(kim["id"])["code"] == "C001"
+    tags = {t["uid"]: t["user_id"] for t in users.list_tags()}
+    assert tags == {"04JO": jo["id"], "04KI": kim["id"]}         # cards didn't move
+
+
+def test_change_code_service_rules(services):
+    _, _, users = services
+    jo = users.add("Jo Park", "A")
+    kim = users.add("Kim Lee", "A")
+    with pytest.raises(IdTaken) as taken:
+        users.change_code(jo["id"], "A002")
+    assert taken.value.other["id"] == kim["id"]
+    assert users.get(jo["id"])["code"] == "A001"                 # nothing changed
+    users.change_code(jo["id"], "a2", swap=True)                 # short form works
+    assert users.get(jo["id"])["code"] == "A002" and users.get(kim["id"])["code"] == "A001"
+    assert users.change_code(jo["id"], "007")["user"]["section"] == "M"   # mentor
+    for bad in ("U001", "Z001", "A1000", "hello"):
+        with pytest.raises(UserError):
+            users.change_code(jo["id"], bad)
+    assert users.add("New Person", "A")["code"] == "A002"        # freed ID is reused
+
+
+def test_cli_change_id_needs_swap_for_a_taken_id(services, capsys):
+    from argparse import Namespace
+
+    from nfc_login.admin import cli
+    _, _, users = services
+    users.add("Drew Hale", "A")
+    users.add("Robin Alder", "B")
+    s = Namespace(users=users)
+    cli.cmd_user_change_id(s, Namespace(code="A001", new_code="B001", swap=False), None)
+    assert "--swap" in capsys.readouterr().out
+    assert users.get_by_code("A001")["username"] == "Drew Hale"
+    cli.cmd_user_change_id(s, Namespace(code="A001", new_code="B001", swap=True), None)
+    assert users.get_by_code("B001")["username"] == "Drew Hale"
+    assert users.get_by_code("A001")["username"] == "Robin Alder"
